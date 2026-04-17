@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 # Page config
 # =========================================================
 st.set_page_config(
-    page_title="Exhibition Exhibitor Extractor V4",
+    page_title="Exhibition Exhibitor Extractor Stable",
     page_icon="🧾",
     layout="wide"
 )
@@ -78,8 +78,7 @@ def clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def safe_get(url: str, timeout: int = 15):
+def safe_get(url: str, timeout: int = 12):
     response = requests.get(url, headers=HEADERS, timeout=timeout)
     response.raise_for_status()
     return response.text, response.url
@@ -157,12 +156,6 @@ def get_path_parts(url: str) -> list[str]:
 
 
 def get_directory_root_path(url: str, directory_keywords: list[str]) -> str:
-    """
-    尝试识别目录根路径
-    例如:
-    https://site.com/exhibitors -> /exhibitors
-    https://site.com/en/exhibitors -> /en/exhibitors
-    """
     if not url:
         return "/"
 
@@ -192,10 +185,6 @@ def same_path_prefix(url: str, root_path: str) -> bool:
 
 
 def looks_like_leaf_detail_url(url: str, root_path: str) -> bool:
-    """
-    判断 URL 是否像目录下的叶子详情页
-    例如 /exhibitors/acer-inc
-    """
     parsed = urlparse(url)
     path = parsed.path.rstrip("/")
     root = root_path.rstrip("/")
@@ -207,11 +196,9 @@ def looks_like_leaf_detail_url(url: str, root_path: str) -> bool:
     if not suffix:
         return False
 
-    # 多段更像深层内容页
     if "/" in suffix:
         return True
 
-    # 单段 slug 也很像详情页
     if suffix and not suffix.isdigit():
         return True
 
@@ -310,7 +297,6 @@ def classify_page(
             if directory_root_path and same_path_prefix(href, directory_root_path):
                 same_prefix_links += 1
 
-    # ===== 强判 detail =====
     if directory_root_path and looks_like_leaf_detail_url(url, directory_root_path):
         if has_h1:
             return "detail"
@@ -320,7 +306,6 @@ def classify_page(
     if path_depth(url) >= 2 and has_h1 and not has_page_query(url) and not has_list_like_query(url):
         return "detail"
 
-    # ===== 强判 directory =====
     dir_score = 0
     if contains_any(url_low, directory_keywords):
         dir_score += 30
@@ -457,10 +442,12 @@ def extract_company_name_from_detail(soup: BeautifulSoup, fallback_anchor_text: 
 # =========================================================
 # Discovery
 # =========================================================
-def discover_initial_directory_pages(start_url: str, directory_keywords: list[str], block_page_keywords: list[str], max_candidates: int = 15):
+def discover_initial_directory_pages(start_url: str, directory_keywords: list[str], block_page_keywords: list[str], max_candidates: int = 12):
     soup, final_url = get_soup(start_url)
     candidates = []
     seen = set()
+
+    root_path = get_directory_root_path(final_url, directory_keywords)
 
     page_type = classify_page(
         final_url,
@@ -468,7 +455,7 @@ def discover_initial_directory_pages(start_url: str, directory_keywords: list[st
         directory_keywords=directory_keywords,
         detail_keywords=[],
         block_page_keywords=block_page_keywords,
-        directory_root_path=get_directory_root_path(final_url, directory_keywords)
+        directory_root_path=root_path
     )
 
     start_score = 10 if page_type == "directory" else 3
@@ -541,14 +528,12 @@ def extract_detail_links_and_next_pages(
         if contains_any(href_low, block_page_keywords):
             continue
 
-        # 只关注目录根路径下的页面
         if not same_path_prefix(href, directory_root_path):
             continue
 
         current_path = urlparse(href).path.rstrip("/")
         root_path = directory_root_path.rstrip("/")
 
-        # ===== 目录分页 / 目录筛选页 =====
         if (
             current_path == root_path
             and (has_page_query(href) or has_list_like_query(href) or is_next_page_anchor(anchor_text, href))
@@ -559,7 +544,6 @@ def extract_detail_links_and_next_pages(
             })
             continue
 
-        # ===== 叶子详情页 =====
         if looks_like_leaf_detail_url(href, directory_root_path):
             score = score_link_candidate(
                 anchor_text=anchor_text,
@@ -620,7 +604,7 @@ def fast_scan(
         start_url=start_url,
         directory_keywords=directory_keywords,
         block_page_keywords=block_page_keywords,
-        max_candidates=min(max_directory_pages, 15)
+        max_candidates=min(max_directory_pages, 12)
     )
 
     logs.append(f"Initial directory candidates found: {len(initial_pages)}")
@@ -734,39 +718,39 @@ def fast_scan(
 # =========================================================
 def enrich_top_n(
     base_df: pd.DataFrame,
-    detail_links_df: pd.DataFrame,
     block_words: list[str],
     directory_keywords: list[str],
     detail_keywords: list[str],
     block_page_keywords: list[str],
     directory_root_path: str,
-    max_detail_pages: int = 50,
+    max_detail_pages: int = 30,
     delay_seconds: float = 0.1
 ):
     logs = []
-    if base_df.empty or detail_links_df.empty:
+
+    if base_df.empty:
         return base_df.copy(), ["Nothing to enrich."]
+
+    work_df = base_df.copy().sort_values(["confidence_score"], ascending=False).reset_index(drop=True)
+    total_candidates = min(len(work_df), max_detail_pages)
+
+    if total_candidates == 0:
+        return work_df, ["Nothing to enrich."]
 
     enriched_rows = []
     count = 0
-
-    work_df = base_df.copy()
-    work_df = work_df.sort_values(["confidence_score"], ascending=False).reset_index(drop=True)
-
-    total_candidates = min(len(work_df), max_detail_pages)
     progress = st.progress(0.0, text="Enriching detail pages...")
 
-    processed = 0
-    for _, row in work_df.iterrows():
-        if processed >= total_candidates:
+    for idx, (_, row) in enumerate(work_df.iterrows()):
+        if idx >= total_candidates:
             break
 
         detail_link = str(row.get("detail_link", "")).strip()
+        new_row = row.to_dict()
 
         if not detail_link:
-            enriched_rows.append(row.to_dict())
-            processed += 1
-            progress.progress(min(processed / total_candidates, 1.0), text=f"Enriching detail pages... {processed}/{total_candidates}")
+            enriched_rows.append(new_row)
+            progress.progress((idx + 1) / total_candidates, text=f"Enriching detail pages... {idx + 1}/{total_candidates}")
             continue
 
         try:
@@ -781,10 +765,7 @@ def enrich_top_n(
                 directory_root_path=directory_root_path
             )
 
-            if page_type != "detail":
-                enriched_rows.append(row.to_dict())
-                logs.append(f"Skipped non-detail page: {resolved} | type={page_type}")
-            else:
+            if page_type == "detail":
                 page_text = clean_text(soup.get_text(" ", strip=True))
                 company_name, confidence = extract_company_name_from_detail(
                     soup=soup,
@@ -792,7 +773,6 @@ def enrich_top_n(
                     block_words=block_words
                 )
 
-                new_row = row.to_dict()
                 if company_name:
                     new_row["company_name"] = company_name
                 new_row["website"] = extract_external_website(soup, resolved) or new_row.get("website", "")
@@ -803,19 +783,19 @@ def enrich_top_n(
                 new_row["detail_link"] = resolved
                 new_row["confidence_score"] = min(100, max(int(new_row.get("confidence_score", 0)), confidence))
                 new_row["extraction_method"] = "detail_page_enriched"
-                enriched_rows.append(new_row)
                 count += 1
+            else:
+                logs.append(f"Skipped non-detail page: {resolved} | type={page_type}")
 
         except Exception as e:
-            enriched_rows.append(row.to_dict())
             logs.append(f"Failed detail page: {detail_link} | {e}")
 
-        processed += 1
-        progress.progress(min(processed / total_candidates, 1.0), text=f"Enriching detail pages... {processed}/{total_candidates}")
+        enriched_rows.append(new_row)
+        progress.progress((idx + 1) / total_candidates, text=f"Enriching detail pages... {idx + 1}/{total_candidates}")
         time.sleep(delay_seconds)
 
-    if processed < len(work_df):
-        remainder = work_df.iloc[processed:].to_dict(orient="records")
+    if total_candidates < len(work_df):
+        remainder = work_df.iloc[total_candidates:].to_dict(orient="records")
         enriched_rows.extend(remainder)
 
     progress.empty()
@@ -835,24 +815,40 @@ def enrich_top_n(
 
 
 # =========================================================
+# Session defaults
+# =========================================================
+if "base_df" not in st.session_state:
+    st.session_state["base_df"] = pd.DataFrame()
+if "detail_links_df" not in st.session_state:
+    st.session_state["detail_links_df"] = pd.DataFrame()
+if "directory_pages_df" not in st.session_state:
+    st.session_state["directory_pages_df"] = pd.DataFrame()
+if "fast_logs" not in st.session_state:
+    st.session_state["fast_logs"] = []
+if "directory_root_path" not in st.session_state:
+    st.session_state["directory_root_path"] = "/"
+if "enriched_df" not in st.session_state:
+    st.session_state["enriched_df"] = pd.DataFrame()
+if "enrich_logs" not in st.session_state:
+    st.session_state["enrich_logs"] = []
+if "config" not in st.session_state:
+    st.session_state["config"] = {}
+
+
+# =========================================================
 # UI
 # =========================================================
-st.title("🧾 Exhibition Exhibitor Extractor V4")
-st.caption("Fast first-pass scan + smarter directory/detail classification + optional top-N detail enrichment.")
+st.title("🧾 Exhibition Exhibitor Extractor Stable")
+st.caption("A more stable Streamlit Cloud version with fast scan and optional enrichment.")
 
-with st.expander("How V4 works", expanded=False):
+with st.expander("How this version works", expanded=False):
     st.markdown(
         """
-V4 uses this workflow:
-
-1. Detect a likely **directory root path**
-2. Scan only likely **directory pages**
-3. Track pagination / list-like query variants
-4. Collect likely **leaf detail pages**
-5. Build a fast base list
-6. Optionally enrich only the top N detail pages
-
-This version is still generic, but stricter than V3.
+1. Detect a likely directory root path  
+2. Scan likely directory pages only  
+3. Collect likely detail-page candidates  
+4. Build a fast base list  
+5. Optionally enrich top N detail pages
         """
     )
 
@@ -863,9 +859,9 @@ with st.form("extract_form"):
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        max_directory_pages = st.number_input("Max directory pages to scan", min_value=1, max_value=100, value=20, step=1)
+        max_directory_pages = st.number_input("Max directory pages to scan", min_value=1, max_value=100, value=10, step=1)
     with c2:
-        max_detail_pages = st.number_input("Max detail pages to enrich", min_value=0, max_value=500, value=30, step=10)
+        max_detail_pages = st.number_input("Max detail pages to enrich", min_value=0, max_value=500, value=20, step=10)
     with c3:
         delay_seconds = st.number_input("Delay per request (seconds)", min_value=0.0, max_value=3.0, value=0.1, step=0.1)
 
@@ -878,16 +874,20 @@ with st.form("extract_form"):
     submitted = st.form_submit_button("Run Fast Scan", use_container_width=True)
 
 if submitted:
+    st.info("Fast Scan started...")
+
     if not website.strip():
         st.error("Please enter a website URL.")
     else:
         try:
+            st.write("Step 1: parsing config")
             start_url = normalize_url(website)
             directory_keywords = parse_csv_keywords(directory_keywords_text)
             detail_keywords = parse_csv_keywords(detail_keywords_text)
             block_words = parse_csv_keywords(block_words_text)
             block_page_keywords = parse_csv_keywords(block_page_keywords_text)
 
+            st.write("Step 2: entering fast scan")
             with st.spinner("Running fast scan..."):
                 base_df, logs, directory_pages_df, detail_links_df, directory_root_path = fast_scan(
                     start_url=start_url,
@@ -899,11 +899,14 @@ if submitted:
                     delay_seconds=float(delay_seconds)
                 )
 
+            st.write("Step 3: saving results")
             st.session_state["base_df"] = base_df
             st.session_state["detail_links_df"] = detail_links_df
             st.session_state["directory_pages_df"] = directory_pages_df
             st.session_state["fast_logs"] = logs
             st.session_state["directory_root_path"] = directory_root_path
+            st.session_state["enriched_df"] = pd.DataFrame()
+            st.session_state["enrich_logs"] = []
             st.session_state["config"] = {
                 "directory_keywords": directory_keywords,
                 "detail_keywords": detail_keywords,
@@ -912,6 +915,8 @@ if submitted:
                 "delay_seconds": float(delay_seconds),
                 "max_detail_pages": int(max_detail_pages),
             }
+
+            st.success("Fast Scan completed.")
 
         except Exception as e:
             st.error(f"Fast scan failed: {e}")
@@ -972,7 +977,7 @@ if not directory_pages_df.empty or not detail_links_df.empty or not base_df.empt
             st.write("-", line)
 
 # Enrichment section
-if not base_df.empty and not detail_links_df.empty:
+if not base_df.empty:
     st.subheader("Optional: Enrich Top N Detail Pages")
 
     cfg = st.session_state.get("config", {})
@@ -980,17 +985,18 @@ if not base_df.empty and not detail_links_df.empty:
         "How many detail pages to enrich now",
         min_value=0,
         max_value=500,
-        value=int(cfg.get("max_detail_pages", 30)),
+        value=int(cfg.get("max_detail_pages", 20)),
         step=10,
         key="enrich_n"
     )
 
     if st.button("Run Detail Enrichment", use_container_width=True):
+        st.info("Detail enrichment started...")
+
         try:
             with st.spinner("Running detail enrichment..."):
                 enriched_df, enrich_logs = enrich_top_n(
                     base_df=base_df,
-                    detail_links_df=detail_links_df,
                     block_words=cfg["block_words"],
                     directory_keywords=cfg["directory_keywords"],
                     detail_keywords=cfg["detail_keywords"],
@@ -1002,6 +1008,7 @@ if not base_df.empty and not detail_links_df.empty:
 
             st.session_state["enriched_df"] = enriched_df
             st.session_state["enrich_logs"] = enrich_logs
+            st.success("Detail enrichment completed.")
 
         except Exception as e:
             st.error(f"Detail enrichment failed: {e}")
@@ -1043,11 +1050,16 @@ if not enriched_df.empty:
 st.sidebar.header("Recommended workflow")
 st.sidebar.markdown(
     """
-1. Set **Max directory pages** to 10–20  
+1. Set **Max directory pages** to 5–10  
 2. Run **Fast Scan** first  
-3. Check if the base list looks reasonable  
-4. Then enrich only **Top 30 / 50** detail pages
+3. Confirm the base list looks reasonable  
+4. Then enrich only **Top 10 / 20 / 30**
 """
+)
+
+st.sidebar.header("Recommended test params")
+st.sidebar.code(
+    "Max directory pages = 5\nMax detail pages = 10\nDelay = 0.1"
 )
 
 st.sidebar.header("Install")
