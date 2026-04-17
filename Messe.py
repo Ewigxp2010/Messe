@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 # Page config
 # =========================================================
 st.set_page_config(
-    page_title="Exhibition Exhibitor Extractor V3",
+    page_title="Exhibition Exhibitor Extractor V4",
     page_icon="🧾",
     layout="wide"
 )
@@ -150,6 +150,84 @@ def make_excel_bytes(df: pd.DataFrame) -> bytes:
 
 
 # =========================================================
+# Path helpers
+# =========================================================
+def get_path_parts(url: str) -> list[str]:
+    return [p for p in urlparse(url).path.strip("/").split("/") if p]
+
+
+def get_directory_root_path(url: str, directory_keywords: list[str]) -> str:
+    """
+    尝试识别目录根路径
+    例如:
+    https://site.com/exhibitors -> /exhibitors
+    https://site.com/en/exhibitors -> /en/exhibitors
+    """
+    if not url:
+        return "/"
+
+    parts = get_path_parts(url)
+    if not parts:
+        return "/"
+
+    for i, part in enumerate(parts):
+        low = part.lower()
+        if any(k in low for k in directory_keywords):
+            return "/" + "/".join(parts[: i + 1])
+
+    return "/" + parts[0]
+
+
+def same_path_prefix(url: str, root_path: str) -> bool:
+    path = urlparse(url).path.rstrip("/")
+    root = root_path.rstrip("/")
+
+    if root == "":
+        root = "/"
+
+    if path == root:
+        return True
+
+    return path.startswith(root + "/")
+
+
+def looks_like_leaf_detail_url(url: str, root_path: str) -> bool:
+    """
+    判断 URL 是否像目录下的叶子详情页
+    例如 /exhibitors/acer-inc
+    """
+    parsed = urlparse(url)
+    path = parsed.path.rstrip("/")
+    root = root_path.rstrip("/")
+
+    if not path.startswith(root + "/"):
+        return False
+
+    suffix = path[len(root):].strip("/")
+    if not suffix:
+        return False
+
+    # 多段更像深层内容页
+    if "/" in suffix:
+        return True
+
+    # 单段 slug 也很像详情页
+    if suffix and not suffix.isdigit():
+        return True
+
+    return False
+
+
+def has_list_like_query(url: str) -> bool:
+    qs = parse_qs(urlparse(url).query)
+    list_keys = {
+        "page", "search", "q", "letter", "alpha", "category",
+        "topic", "hall", "country", "brand", "filter", "keyword"
+    }
+    return any(k.lower() in list_keys for k in qs.keys())
+
+
+# =========================================================
 # Name / scoring
 # =========================================================
 def looks_like_bad_name(name: str, block_words: list[str]) -> bool:
@@ -158,7 +236,7 @@ def looks_like_bad_name(name: str, block_words: list[str]) -> bool:
 
     if not name:
         return True
-    if len(name) < 2 or len(name) > 140:
+    if len(name) < 2 or len(name) > 180:
         return True
     if low.isdigit():
         return True
@@ -170,12 +248,12 @@ def looks_like_bad_name(name: str, block_words: list[str]) -> bool:
     junk_patterns = [
         "read more", "load more", "show more", "next page", "previous page",
         "page ", "view all", "all exhibitors", "all brands", "all participants",
-        "search result"
+        "search result", "back to", "overview"
     ]
     if any(p in low for p in junk_patterns):
         return True
 
-    if len(name.split()) > 14:
+    if len(name.split()) > 16:
         return True
 
     return False
@@ -206,73 +284,84 @@ def name_quality_score(name: str, block_words: list[str]) -> int:
 # =========================================================
 # Page classification
 # =========================================================
-def score_directory_page(url: str, soup: BeautifulSoup, directory_keywords: list[str], block_page_keywords: list[str]) -> int:
+def classify_page(
+    url: str,
+    soup: BeautifulSoup,
+    directory_keywords: list[str],
+    detail_keywords: list[str],
+    block_page_keywords: list[str],
+    directory_root_path: str | None = None
+) -> str:
     url_low = url.lower()
-    text_sample = clean_text(soup.get_text(" ", strip=True))[:3000].lower()
-    score = 0
+    page_text = clean_text(soup.get_text(" ", strip=True))[:4000].lower()
 
-    if contains_any(url_low, directory_keywords):
-        score += 35
-    if contains_any(text_sample, directory_keywords):
-        score += 15
-    if has_page_query(url):
-        score += 10
     if contains_any(url_low, block_page_keywords):
-        score -= 50
+        return "other"
+
+    h1 = soup.find("h1")
+    has_h1 = bool(h1 and clean_text(h1.get_text(" ", strip=True)))
 
     internal_links = 0
+    same_prefix_links = 0
     for a in soup.find_all("a", href=True):
         href = urljoin(url, a["href"])
         if is_valid_http_url(href) and same_domain(url, href):
             internal_links += 1
+            if directory_root_path and same_path_prefix(href, directory_root_path):
+                same_prefix_links += 1
 
-    if internal_links >= 20:
-        score += 10
-    if internal_links >= 60:
-        score += 5
+    # ===== 强判 detail =====
+    if directory_root_path and looks_like_leaf_detail_url(url, directory_root_path):
+        if has_h1:
+            return "detail"
+        if internal_links < 80:
+            return "detail"
 
-    return score
-
-
-def score_detail_page(url: str, soup: BeautifulSoup, detail_keywords: list[str], block_page_keywords: list[str]) -> int:
-    url_low = url.lower()
-    page_text = clean_text(soup.get_text(" ", strip=True))[:3000].lower()
-    score = 0
-
-    if contains_any(url_low, block_page_keywords):
-        score -= 40
-    if contains_any(url_low, detail_keywords):
-        score += 25
-    if path_depth(url) >= 2:
-        score += 20
-    if path_depth(url) >= 3:
-        score += 10
-
-    h1 = soup.find("h1")
-    if h1 and clean_text(h1.get_text(" ", strip=True)):
-        score += 15
-
-    if any(k in page_text for k in ["website", "email", "phone", "hall", "booth", "stand"]):
-        score += 10
-
-    return score
-
-
-def classify_page(url: str, soup: BeautifulSoup, directory_keywords: list[str], detail_keywords: list[str], block_page_keywords: list[str]) -> str:
-    dir_score = score_directory_page(url, soup, directory_keywords, block_page_keywords)
-    det_score = score_detail_page(url, soup, detail_keywords, block_page_keywords)
-
-    if dir_score >= max(30, det_score + 5):
-        return "directory"
-    if det_score >= max(35, dir_score + 5):
+    if path_depth(url) >= 2 and has_h1 and not has_page_query(url) and not has_list_like_query(url):
         return "detail"
+
+    # ===== 强判 directory =====
+    dir_score = 0
+    if contains_any(url_low, directory_keywords):
+        dir_score += 30
+    if has_page_query(url) or has_list_like_query(url):
+        dir_score += 20
+    if directory_root_path and urlparse(url).path.rstrip("/") == directory_root_path.rstrip("/"):
+        dir_score += 25
+    if same_prefix_links >= 20:
+        dir_score += 20
+    if internal_links >= 40:
+        dir_score += 10
+
+    det_score = 0
+    if contains_any(url_low, detail_keywords):
+        det_score += 10
+    if path_depth(url) >= 2:
+        det_score += 15
+    if has_h1:
+        det_score += 15
+    if any(k in page_text for k in ["website", "email", "phone", "hall", "booth", "stand"]):
+        det_score += 10
+
+    if dir_score >= max(30, det_score + 10):
+        return "directory"
+    if det_score >= max(35, dir_score + 10):
+        return "detail"
+
     return "other"
 
 
 # =========================================================
 # Link helpers
 # =========================================================
-def score_link_candidate(anchor_text: str, href: str, directory_keywords: list[str], detail_keywords: list[str], block_words: list[str], block_page_keywords: list[str]) -> int:
+def score_link_candidate(
+    anchor_text: str,
+    href: str,
+    directory_keywords: list[str],
+    detail_keywords: list[str],
+    block_words: list[str],
+    block_page_keywords: list[str]
+) -> int:
     value = f"{anchor_text} {href}".lower()
     score = 0
 
@@ -290,7 +379,7 @@ def score_link_candidate(anchor_text: str, href: str, directory_keywords: list[s
         score += 10
     if depth >= 3:
         score += 5
-    if has_page_query(href):
+    if has_page_query(href) or has_list_like_query(href):
         score -= 20
     if href.lower().endswith((".pdf", ".jpg", ".jpeg", ".png", ".webp", ".svg", ".zip")):
         score -= 100
@@ -311,7 +400,7 @@ def is_next_page_anchor(anchor_text: str, href: str) -> bool:
 
 
 # =========================================================
-# Detail-page enrichment
+# Detail-page enrichment helpers
 # =========================================================
 def extract_external_website(soup: BeautifulSoup, page_url: str) -> str:
     candidates = []
@@ -374,10 +463,12 @@ def discover_initial_directory_pages(start_url: str, directory_keywords: list[st
     seen = set()
 
     page_type = classify_page(
-        final_url, soup,
+        final_url,
+        soup,
         directory_keywords=directory_keywords,
         detail_keywords=[],
-        block_page_keywords=block_page_keywords
+        block_page_keywords=block_page_keywords,
+        directory_root_path=get_directory_root_path(final_url, directory_keywords)
     )
 
     start_score = 10 if page_type == "directory" else 3
@@ -403,7 +494,7 @@ def discover_initial_directory_pages(start_url: str, directory_keywords: list[st
 
         if contains_any(value, directory_keywords):
             score += 30
-        if has_page_query(href):
+        if has_page_query(href) or has_list_like_query(href):
             score += 10
         if contains_any(href.lower(), block_page_keywords):
             score -= 40
@@ -427,6 +518,7 @@ def discover_initial_directory_pages(start_url: str, directory_keywords: list[st
 def extract_detail_links_and_next_pages(
     soup: BeautifulSoup,
     current_url: str,
+    directory_root_path: str,
     directory_keywords: list[str],
     detail_keywords: list[str],
     block_words: list[str],
@@ -446,37 +538,48 @@ def extract_detail_links_and_next_pages(
 
         href_low = href.lower()
 
-        if is_next_page_anchor(anchor_text, href):
-            if not contains_any(href_low, block_page_keywords):
-                next_pages.append({"url": href, "anchor_text": anchor_text})
+        if contains_any(href_low, block_page_keywords):
             continue
 
-        score = score_link_candidate(
-            anchor_text=anchor_text,
-            href=href,
-            directory_keywords=directory_keywords,
-            detail_keywords=detail_keywords,
-            block_words=block_words,
-            block_page_keywords=block_page_keywords
-        )
-
-        if score <= 0:
+        # 只关注目录根路径下的页面
+        if not same_path_prefix(href, directory_root_path):
             continue
 
-        if looks_like_bad_name(anchor_text, block_words):
-            if path_depth(href) < 2:
-                continue
-            score += 5
+        current_path = urlparse(href).path.rstrip("/")
+        root_path = directory_root_path.rstrip("/")
 
-        if has_page_query(href):
+        # ===== 目录分页 / 目录筛选页 =====
+        if (
+            current_path == root_path
+            and (has_page_query(href) or has_list_like_query(href) or is_next_page_anchor(anchor_text, href))
+        ):
+            next_pages.append({
+                "url": href,
+                "anchor_text": anchor_text
+            })
             continue
 
-        detail_links.append({
-            "anchor_text": anchor_text,
-            "detail_link": href,
-            "source_page": current_url,
-            "link_score": score
-        })
+        # ===== 叶子详情页 =====
+        if looks_like_leaf_detail_url(href, directory_root_path):
+            score = score_link_candidate(
+                anchor_text=anchor_text,
+                href=href,
+                directory_keywords=directory_keywords,
+                detail_keywords=detail_keywords,
+                block_words=block_words,
+                block_page_keywords=block_page_keywords
+            )
+
+            if looks_like_bad_name(anchor_text, block_words):
+                score -= 10
+
+            if score > 0:
+                detail_links.append({
+                    "anchor_text": anchor_text,
+                    "detail_link": href,
+                    "source_page": current_url,
+                    "link_score": score
+                })
 
     if detail_links:
         df = pd.DataFrame(detail_links)
@@ -510,6 +613,9 @@ def fast_scan(
     all_directory_pages = []
     all_detail_links = []
 
+    directory_root_path = get_directory_root_path(start_url, directory_keywords)
+    logs.append(f"Directory root path detected: {directory_root_path}")
+
     initial_pages = discover_initial_directory_pages(
         start_url=start_url,
         directory_keywords=directory_keywords,
@@ -541,7 +647,8 @@ def fast_scan(
                 soup,
                 directory_keywords=directory_keywords,
                 detail_keywords=detail_keywords,
-                block_page_keywords=block_page_keywords
+                block_page_keywords=block_page_keywords,
+                directory_root_path=directory_root_path
             )
 
             if page_type != "directory":
@@ -555,6 +662,7 @@ def fast_scan(
             detail_links, next_pages = extract_detail_links_and_next_pages(
                 soup=soup,
                 current_url=resolved,
+                directory_root_path=directory_root_path,
                 directory_keywords=directory_keywords,
                 detail_keywords=detail_keywords,
                 block_words=block_words,
@@ -618,7 +726,7 @@ def fast_scan(
     logs.append(f"Unique detail links collected: {len(all_detail_links)}")
     logs.append(f"Fast-scan exhibitor rows: {len(df) if not df.empty else 0}")
 
-    return df, logs, pd.DataFrame(all_directory_pages), pd.DataFrame(all_detail_links)
+    return df, logs, pd.DataFrame(all_directory_pages), pd.DataFrame(all_detail_links), directory_root_path
 
 
 # =========================================================
@@ -631,6 +739,7 @@ def enrich_top_n(
     directory_keywords: list[str],
     detail_keywords: list[str],
     block_page_keywords: list[str],
+    directory_root_path: str,
     max_detail_pages: int = 50,
     delay_seconds: float = 0.1
 ):
@@ -638,29 +747,26 @@ def enrich_top_n(
     if base_df.empty or detail_links_df.empty:
         return base_df.copy(), ["Nothing to enrich."]
 
-    link_map = {}
-    for _, row in detail_links_df.iterrows():
-        link_map[normalize_url_for_dedup(row["detail_link"])] = row.to_dict()
-
     enriched_rows = []
     count = 0
 
     work_df = base_df.copy()
     work_df = work_df.sort_values(["confidence_score"], ascending=False).reset_index(drop=True)
 
+    total_candidates = min(len(work_df), max_detail_pages)
     progress = st.progress(0.0, text="Enriching detail pages...")
 
-    total_candidates = min(len(work_df), max_detail_pages)
     processed = 0
-
     for _, row in work_df.iterrows():
-        if count >= max_detail_pages:
+        if processed >= total_candidates:
             break
 
         detail_link = str(row.get("detail_link", "")).strip()
+
         if not detail_link:
             enriched_rows.append(row.to_dict())
             processed += 1
+            progress.progress(min(processed / total_candidates, 1.0), text=f"Enriching detail pages... {processed}/{total_candidates}")
             continue
 
         try:
@@ -671,7 +777,8 @@ def enrich_top_n(
                 soup,
                 directory_keywords=directory_keywords,
                 detail_keywords=detail_keywords,
-                block_page_keywords=block_page_keywords
+                block_page_keywords=block_page_keywords,
+                directory_root_path=directory_root_path
             )
 
             if page_type != "detail":
@@ -707,10 +814,6 @@ def enrich_top_n(
         progress.progress(min(processed / total_candidates, 1.0), text=f"Enriching detail pages... {processed}/{total_candidates}")
         time.sleep(delay_seconds)
 
-        if processed >= total_candidates:
-            break
-
-    # 把未处理部分直接补回
     if processed < len(work_df):
         remainder = work_df.iloc[processed:].to_dict(orient="records")
         enriched_rows.extend(remainder)
@@ -734,21 +837,22 @@ def enrich_top_n(
 # =========================================================
 # UI
 # =========================================================
-st.title("🧾 Exhibition Exhibitor Extractor V3")
-st.caption("Fast first-pass scan + optional top-N detail enrichment.")
+st.title("🧾 Exhibition Exhibitor Extractor V4")
+st.caption("Fast first-pass scan + smarter directory/detail classification + optional top-N detail enrichment.")
 
-with st.expander("How V3 works", expanded=False):
+with st.expander("How V4 works", expanded=False):
     st.markdown(
         """
-V3 uses a faster two-step workflow:
+V4 uses this workflow:
 
-1. **Fast Scan**  
-   Quickly scans directory pages and builds a base exhibitor list from collected detail links.
+1. Detect a likely **directory root path**
+2. Scan only likely **directory pages**
+3. Track pagination / list-like query variants
+4. Collect likely **leaf detail pages**
+5. Build a fast base list
+6. Optionally enrich only the top N detail pages
 
-2. **Enrich Top N**  
-   Optionally visits only the top N detail pages to enrich website, email, phone, hall, and booth fields.
-
-This avoids waiting a long time before seeing any result.
+This version is still generic, but stricter than V3.
         """
     )
 
@@ -759,12 +863,13 @@ with st.form("extract_form"):
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        max_directory_pages = st.number_input("Max directory pages to scan", min_value=1, max_value=100, value=10, step=1)
+        max_directory_pages = st.number_input("Max directory pages to scan", min_value=1, max_value=100, value=20, step=1)
     with c2:
-        max_detail_pages = st.number_input("Max detail pages to enrich", min_value=0, max_value=500, value=50, step=10)
+        max_detail_pages = st.number_input("Max detail pages to enrich", min_value=0, max_value=500, value=30, step=10)
     with c3:
         delay_seconds = st.number_input("Delay per request (seconds)", min_value=0.0, max_value=3.0, value=0.1, step=0.1)
 
+    st.subheader("Keyword config")
     directory_keywords_text = st.text_area("Directory keywords (comma separated)", value=DEFAULT_DIRECTORY_KEYWORDS, height=90)
     detail_keywords_text = st.text_area("Detail-page keywords (comma separated)", value=DEFAULT_DETAIL_KEYWORDS, height=90)
     block_words_text = st.text_area("Block words for names/text (comma separated)", value=DEFAULT_BLOCK_WORDS, height=110)
@@ -784,7 +889,7 @@ if submitted:
             block_page_keywords = parse_csv_keywords(block_page_keywords_text)
 
             with st.spinner("Running fast scan..."):
-                base_df, logs, directory_pages_df, detail_links_df = fast_scan(
+                base_df, logs, directory_pages_df, detail_links_df, directory_root_path = fast_scan(
                     start_url=start_url,
                     max_directory_pages=int(max_directory_pages),
                     directory_keywords=directory_keywords,
@@ -798,6 +903,7 @@ if submitted:
             st.session_state["detail_links_df"] = detail_links_df
             st.session_state["directory_pages_df"] = directory_pages_df
             st.session_state["fast_logs"] = logs
+            st.session_state["directory_root_path"] = directory_root_path
             st.session_state["config"] = {
                 "directory_keywords": directory_keywords,
                 "detail_keywords": detail_keywords,
@@ -815,8 +921,12 @@ base_df = st.session_state.get("base_df", pd.DataFrame())
 detail_links_df = st.session_state.get("detail_links_df", pd.DataFrame())
 directory_pages_df = st.session_state.get("directory_pages_df", pd.DataFrame())
 fast_logs = st.session_state.get("fast_logs", [])
+directory_root_path = st.session_state.get("directory_root_path", "/")
 
 if not directory_pages_df.empty or not detail_links_df.empty or not base_df.empty:
+    st.subheader("Detected directory root path")
+    st.code(directory_root_path)
+
     st.subheader("Directory pages actually scanned")
     if not directory_pages_df.empty:
         st.dataframe(directory_pages_df, use_container_width=True, height=220)
@@ -841,9 +951,21 @@ if not directory_pages_df.empty or not detail_links_df.empty or not base_df.empt
 
         d1, d2 = st.columns(2)
         with d1:
-            st.download_button("Download Fast Scan CSV", data=csv_data, file_name="exhibitors_fast_scan.csv", mime="text/csv", use_container_width=True)
+            st.download_button(
+                "Download Fast Scan CSV",
+                data=csv_data,
+                file_name="exhibitors_fast_scan.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
         with d2:
-            st.download_button("Download Fast Scan Excel", data=excel_data, file_name="exhibitors_fast_scan.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            st.download_button(
+                "Download Fast Scan Excel",
+                data=excel_data,
+                file_name="exhibitors_fast_scan.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
     with st.expander("Fast Scan Log", expanded=False):
         for line in fast_logs:
@@ -858,7 +980,7 @@ if not base_df.empty and not detail_links_df.empty:
         "How many detail pages to enrich now",
         min_value=0,
         max_value=500,
-        value=int(cfg.get("max_detail_pages", 50)),
+        value=int(cfg.get("max_detail_pages", 30)),
         step=10,
         key="enrich_n"
     )
@@ -873,6 +995,7 @@ if not base_df.empty and not detail_links_df.empty:
                     directory_keywords=cfg["directory_keywords"],
                     detail_keywords=cfg["detail_keywords"],
                     block_page_keywords=cfg["block_page_keywords"],
+                    directory_root_path=directory_root_path,
                     max_detail_pages=int(enrich_n),
                     delay_seconds=float(cfg["delay_seconds"])
                 )
@@ -896,9 +1019,21 @@ if not enriched_df.empty:
 
     e1, e2 = st.columns(2)
     with e1:
-        st.download_button("Download Enriched CSV", data=csv_data2, file_name="exhibitors_enriched.csv", mime="text/csv", use_container_width=True)
+        st.download_button(
+            "Download Enriched CSV",
+            data=csv_data2,
+            file_name="exhibitors_enriched.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
     with e2:
-        st.download_button("Download Enriched Excel", data=excel_data2, file_name="exhibitors_enriched.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        st.download_button(
+            "Download Enriched Excel",
+            data=excel_data2,
+            file_name="exhibitors_enriched.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
     with st.expander("Enrichment Log", expanded=False):
         for line in enrich_logs:
@@ -908,10 +1043,10 @@ if not enriched_df.empty:
 st.sidebar.header("Recommended workflow")
 st.sidebar.markdown(
     """
-1. Set **Max directory pages** to 5–15  
+1. Set **Max directory pages** to 10–20  
 2. Run **Fast Scan** first  
 3. Check if the base list looks reasonable  
-4. Then enrich only **Top 30 / 50 / 100** detail pages
+4. Then enrich only **Top 30 / 50** detail pages
 """
 )
 
