@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import time
 import unicodedata
@@ -518,6 +519,41 @@ def fetch_html_with_retry(url: str, config: Optional[ScrapeConfig] = None, retri
     if last_error:
         raise last_error
     raise ScrapeError(f"Failed to fetch {url}")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_fetch_html(
+    url: str,
+    max_pages: int,
+    page_url_template: str,
+    item_selector: str,
+    name_selector: str,
+    hall_selector: str,
+    booth_selector: str,
+    country_selector: str,
+    website_selector: str,
+    detail_link_selector: str,
+    crawl_detail_pages: bool,
+    auto_discover_exhibitor_directory: bool,
+    detail_page_limit: int,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    config = ScrapeConfig(
+        url=url,
+        max_pages=max_pages,
+        page_url_template=page_url_template,
+        item_selector=item_selector,
+        name_selector=name_selector,
+        hall_selector=hall_selector,
+        booth_selector=booth_selector,
+        country_selector=country_selector,
+        website_selector=website_selector,
+        detail_link_selector=detail_link_selector,
+        crawl_detail_pages=crawl_detail_pages,
+        auto_discover_exhibitor_directory=auto_discover_exhibitor_directory,
+        detail_page_limit=detail_page_limit,
+    )
+    rows = scrape_exhibitors(config)
+    return rows, list(LAST_SCRAPE_WARNINGS)
 
 
 def parse_exhibitors_from_html(html: str, base_url: str = "", config: Optional[ScrapeConfig] = None) -> List[Dict[str, Any]]:
@@ -1566,6 +1602,20 @@ def _safe_records(df: pd.DataFrame) -> List[Dict[str, object]]:
     return df.fillna("").to_dict(orient="records")
 
 
+def _file_fingerprint(uploaded_file) -> str:
+    if uploaded_file is None:
+        return ""
+    position = uploaded_file.tell() if hasattr(uploaded_file, "tell") else 0
+    uploaded_file.seek(0)
+    digest = hashlib.md5(uploaded_file.read()).hexdigest()
+    uploaded_file.seek(position)
+    return digest
+
+
+def _cache_key(parts: Sequence[Any]) -> str:
+    return hashlib.md5(json.dumps(list(parts), sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
 def _render_downloads(result_df: pd.DataFrame) -> None:
     ordered = order_columns(sort_leads_by_hall(result_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
@@ -1727,6 +1777,10 @@ def main() -> None:
     if not can_run:
         st.info("Upload an SKM Excel/CSV file, then enter an exhibitor URL or upload exhibitor page HTML.")
 
+    result_state_key = "last_result_df"
+    warning_state_key = "last_scrape_warnings"
+    signature_state_key = "last_run_signature"
+
     if run:
         config = ScrapeConfig(
             url=url,
@@ -1743,17 +1797,55 @@ def main() -> None:
             auto_discover_exhibitor_directory=auto_discover_exhibitor_directory,
             detail_page_limit=int(detail_page_limit),
         )
+        run_signature = _cache_key(
+            [
+                url,
+                int(max_pages),
+                page_url_template,
+                item_selector,
+                name_selector,
+                hall_selector,
+                booth_selector,
+                country_selector,
+                website_selector,
+                detail_link_selector,
+                crawl_detail_pages,
+                auto_discover_exhibitor_directory,
+                int(detail_page_limit),
+                threshold,
+                review_margin,
+                name_col,
+                alias_cols,
+                _file_fingerprint(skm_upload),
+                _file_fingerprint(html_upload),
+            ]
+        )
 
         try:
             with st.status("Scraping exhibitors...", expanded=True) as status:
                 if html_upload is not None:
                     html = _read_html(html_upload)
                     exhibitors = parse_exhibitors_from_html(html, base_url=url, config=config)
+                    scrape_warnings = []
                 else:
-                    exhibitors = scrape_exhibitors(config)
+                    exhibitors, scrape_warnings = cached_fetch_html(
+                        url=url,
+                        max_pages=int(max_pages),
+                        page_url_template=page_url_template.strip(),
+                        item_selector=item_selector.strip(),
+                        name_selector=name_selector.strip(),
+                        hall_selector=hall_selector.strip(),
+                        booth_selector=booth_selector.strip(),
+                        country_selector=country_selector.strip(),
+                        website_selector=website_selector.strip(),
+                        detail_link_selector=detail_link_selector.strip(),
+                        crawl_detail_pages=crawl_detail_pages,
+                        auto_discover_exhibitor_directory=auto_discover_exhibitor_directory,
+                        detail_page_limit=int(detail_page_limit),
+                    )
                 status.write(f"Found {len(exhibitors)} exhibitor candidates")
-                if LAST_SCRAPE_WARNINGS:
-                    status.write(f"Skipped {len(LAST_SCRAPE_WARNINGS)} page(s) after retry. Results may be slightly incomplete.")
+                if scrape_warnings:
+                    status.write(f"Skipped {len(scrape_warnings)} page(s) after retry. Results may be slightly incomplete.")
 
                 matched = match_exhibitors_to_skm(
                     exhibitors=exhibitors,
@@ -1771,18 +1863,24 @@ def main() -> None:
                 return
 
             result_df = pd.DataFrame(matched)
-            if LAST_SCRAPE_WARNINGS:
-                with st.expander("Scrape warnings"):
-                    for warning in LAST_SCRAPE_WARNINGS[:25]:
-                        st.warning(warning)
-                    if len(LAST_SCRAPE_WARNINGS) > 25:
-                        st.warning(f"...and {len(LAST_SCRAPE_WARNINGS) - 25} more skipped pages.")
-            _render_results(result_df)
+            st.session_state[result_state_key] = result_df
+            st.session_state[warning_state_key] = scrape_warnings
+            st.session_state[signature_state_key] = run_signature
 
         except ScrapeError as exc:
             st.error(str(exc))
         except Exception as exc:
             st.exception(exc)
+
+    if result_state_key in st.session_state:
+        scrape_warnings = st.session_state.get(warning_state_key, [])
+        if scrape_warnings:
+            with st.expander("Scrape warnings"):
+                for warning in scrape_warnings[:25]:
+                    st.warning(warning)
+                if len(scrape_warnings) > 25:
+                    st.warning(f"...and {len(scrape_warnings) - 25} more skipped pages.")
+        _render_results(st.session_state[result_state_key])
 
 
 if __name__ == "__main__":
