@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from io import BytesIO
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 import pandas as pd
 import requests
@@ -406,11 +406,49 @@ GENERIC_LINK_TEXT = {
     "weiter",
 }
 
+SHOW_AREA_PHRASES = [
+    "Photo, Video & Content Creation",
+    "Communication & Connectivity",
+    "Fitness & Digital Health",
+    "Home & Entertainment",
+    "Computing & Gaming",
+    "IFA Global Markets",
+    "Home Appliances",
+    "Reseller Park",
+    "Smart Home",
+    "IFA Next",
+    "Mobility",
+    "Audio",
+]
+
+COUNTRY_SUFFIXES = [
+    "United Arab Emirates",
+    "United Kingdom",
+    "South Korea",
+    "Hong Kong",
+    "Saudi Arabia",
+    "United States",
+    "USA",
+    "Germany",
+    "China",
+    "Taiwan",
+    "Türkiye",
+    "Turkey",
+    "Italy",
+    "Spain",
+    "France",
+    "Poland",
+    "Sweden",
+    "Netherlands",
+    "Singapore",
+    "Japan",
+]
+
 
 @dataclass
 class ScrapeConfig:
     url: str
-    max_pages: int = 1
+    max_pages: int = 100
     page_url_template: str = ""
     item_selector: str = ""
     name_selector: str = ""
@@ -420,6 +458,7 @@ class ScrapeConfig:
     website_selector: str = ""
     detail_link_selector: str = ""
     crawl_detail_pages: bool = False
+    auto_discover_exhibitor_directory: bool = True
     detail_page_limit: int = 50
     request_delay_seconds: float = 0.25
     timeout_seconds: int = 25
@@ -448,7 +487,7 @@ def fetch_html(url: str, config: Optional[ScrapeConfig] = None) -> str:
         raise ScrapeError("Missing requests. Please install dependencies from requirements.txt.") from exc
 
     cfg = config or ScrapeConfig(url=url)
-    headers = {"User-Agent": cfg.user_agent, "Accept-Language": "de-DE,de;q=0.9,en;q=0.8"}
+    headers = {"User-Agent": cfg.user_agent, "Accept-Language": "en-US,en;q=0.9,de;q=0.8"}
     response = requests.get(url, headers=headers, timeout=cfg.timeout_seconds)
     response.raise_for_status()
     response.encoding = response.apparent_encoding or response.encoding
@@ -463,6 +502,10 @@ def parse_exhibitors_from_html(html: str, base_url: str = "", config: Optional[S
     all_rows: List[Dict[str, Any]] = []
     if cfg.item_selector:
         all_rows.extend(_extract_with_custom_selectors(soup, base_url, cfg))
+
+    brand_rows = _extract_from_brand_cards(soup, base_url)
+    if brand_rows:
+        return _dedupe_exhibitors(all_rows + brand_rows)
 
     all_rows.extend(_extract_from_json_scripts(soup, base_url))
     all_rows.extend(_extract_from_tables(soup, base_url))
@@ -480,6 +523,18 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
 
     for index, url in enumerate(urls):
         html = fetch_html(url, config)
+        if (
+            index == 0
+            and config.auto_discover_exhibitor_directory
+            and not config.page_url_template
+            and not _is_likely_exhibitor_directory_url(url)
+        ):
+            discovered_url = _discover_exhibitor_directory_url(html, url)
+            if discovered_url and discovered_url not in urls:
+                urls[0] = discovered_url
+                url = discovered_url
+                html = fetch_html(url, config)
+
         page_rows = parse_exhibitors_from_html(html, base_url=url, config=config)
         all_rows.extend(page_rows)
 
@@ -496,6 +551,52 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
     if config.crawl_detail_pages:
         rows = enrich_from_detail_pages(rows, config)
     return rows
+
+
+def _is_likely_exhibitor_directory_url(url: str) -> bool:
+    parsed = urlparse(url)
+    path = parsed.path.lower().strip("/")
+    query = parsed.query.lower()
+    return any(token in path or token in query for token in ["exhibitors", "aussteller", "brands", "directory"])
+
+
+def _discover_exhibitor_directory_url(html: str, base_url: str) -> str:
+    BeautifulSoup = _require_bs4()
+    soup = BeautifulSoup(html, "html.parser")
+    best_url = ""
+    best_score = 0
+
+    for link in soup.find_all("a"):
+        href = link.get("href") or ""
+        if not href or href.startswith(("#", "mailto:", "tel:")):
+            continue
+
+        text = _clean_text(link.get_text(" ")).lower()
+        absolute = urljoin(base_url, href)
+        parsed = urlparse(absolute)
+        path_query = f"{parsed.path} {parsed.query}".lower()
+        score = 0
+
+        if "exhibitor" in path_query or "aussteller" in path_query:
+            score += 8
+        if "exhibitor" in text or "aussteller" in text:
+            score += 8
+        if "explore all exhibitors" in text or "exhibitors 2025" in text:
+            score += 8
+        if parsed.path.rstrip("/").lower() == "/exhibitors":
+            score += 6
+        if parsed.path.lower().startswith("/de/") and not urlparse(base_url).path.lower().startswith("/de/"):
+            score -= 4
+        if any(bad in path_query for bad in ["application", "apply", "enquiry", "sponsor", "faq"]):
+            score -= 10
+        if parsed.netloc and parsed.netloc != urlparse(base_url).netloc:
+            score -= 3
+
+        if score > best_score:
+            best_url = absolute
+            best_score = score
+
+    return best_url if best_score >= 8 else ""
 
 
 def enrich_from_detail_pages(rows: Sequence[Dict[str, Any]], config: ScrapeConfig) -> List[Dict[str, Any]]:
@@ -567,7 +668,53 @@ def _find_next_url(html: str, base_url: str) -> str:
             href = node.get("href")
             if href:
                 return urljoin(base_url, href)
+
+    current_page = _current_page_number(base_url)
+    numeric_candidates: List[Tuple[int, str]] = []
+    for node in soup.find_all("a"):
+        href = node.get("href") or ""
+        text = _clean_text(node.get_text(" "))
+        if not href:
+            continue
+
+        page_number = None
+        if text.isdigit():
+            page_number = int(text)
+        else:
+            parsed_href = urlparse(urljoin(base_url, href))
+            qs = parse_qs(parsed_href.query)
+            if qs.get("page") and str(qs["page"][0]).isdigit():
+                page_number = int(qs["page"][0])
+
+        if page_number is not None and page_number > current_page:
+            numeric_candidates.append((page_number, urljoin(base_url, href)))
+
+    if numeric_candidates:
+        numeric_candidates.sort(key=lambda item: item[0])
+        return numeric_candidates[0][1]
+
+    if _looks_like_paginated_directory(html):
+        return _url_with_page(base_url, current_page + 1)
     return ""
+
+
+def _current_page_number(url: str) -> int:
+    qs = parse_qs(urlparse(url).query)
+    if qs.get("page") and str(qs["page"][0]).isdigit():
+        return int(qs["page"][0])
+    return 1
+
+
+def _url_with_page(url: str, page: int) -> str:
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    query["page"] = [str(page)]
+    encoded = urlencode(query, doseq=True)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, encoded, parsed.fragment))
+
+
+def _looks_like_paginated_directory(html: str) -> bool:
+    return bool(re.search(r"\b\d+\s*/\s*\d+\b", html))
 
 
 def _clean_key(key: Any) -> str:
@@ -762,6 +909,55 @@ def _walk_json_for_exhibitors(data: Any, base_url: str) -> Iterable[Dict[str, An
             yield from _walk_json_for_exhibitors(value, base_url)
 
 
+def _extract_from_brand_cards(soup: Any, base_url: str) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for card in soup.select(".brand-card"):
+        name = _select_text(card, ".name") or _guess_name_from_element(card)
+        country = _select_text(card, ".country")
+        detail_url = _guess_detail_link(card, base_url)
+        show_area = _select_text(card, ".show-area")
+        text = _clean_text(card.get_text(" "))
+        locations = card.select(".location")
+
+        if not locations:
+            hall, booth = extract_hall_booth(text)
+            row = _make_row(
+                name=name,
+                hall=hall,
+                booth=booth,
+                country=country or extract_country(text),
+                website="",
+                detail_url=detail_url,
+                source_url=base_url,
+                raw_text=text,
+                method="brand_card",
+            )
+            row["show_area"] = show_area
+            if _is_valid_exhibitor(row):
+                rows.append(row)
+            continue
+
+        for location in locations:
+            hall = _select_text(location, ".brand-location-hall")
+            booth = _select_text(location, ".brand-location-stand")
+            row = _make_row(
+                name=name,
+                hall=hall,
+                booth=booth,
+                country=country,
+                website="",
+                detail_url=detail_url,
+                source_url=base_url,
+                raw_text=text,
+                method="brand_card",
+            )
+            row["show_area"] = show_area
+            if _is_valid_exhibitor(row):
+                rows.append(row)
+
+    return rows
+
+
 def _extract_from_cards(soup: Any, base_url: str) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     selectors = [
@@ -773,7 +969,6 @@ def _extract_from_cards(soup: Any, base_url: str) -> List[Dict[str, Any]]:
         "div[class*='exhibitor']",
         "div[class*='aussteller']",
         "div[class*='company']",
-        "div[class*='brand']",
         "div[class*='result']",
         "div[class*='card']",
         "div[class*='teaser']",
@@ -784,6 +979,8 @@ def _extract_from_cards(soup: Any, base_url: str) -> List[Dict[str, Any]]:
     seen_nodes = set()
     for selector in selectors:
         for item in soup.select(selector):
+            if item.select_one(".brand-card") or item.find_parent(class_="brand-card") or "brand-card" in (item.get("class") or []):
+                continue
             node_id = id(item)
             if node_id in seen_nodes:
                 continue
@@ -911,6 +1108,13 @@ def _make_row(
     raw_text: str,
     method: str,
 ) -> Dict[str, Any]:
+    parsed_name, parsed_hall, parsed_booth, parsed_country = _parse_compact_exhibitor_line(name or raw_text)
+    if parsed_name and (not hall or not booth):
+        name = parsed_name
+        hall = hall or parsed_hall
+        booth = booth or parsed_booth
+        country = country or parsed_country
+
     return {
         "exhibitor_name": _clean_text(name),
         "hall": normalize_hall(hall),
@@ -922,6 +1126,44 @@ def _make_row(
         "raw_text": _clean_text(raw_text),
         "extraction_method": method,
     }
+
+
+def _parse_compact_exhibitor_line(text: str) -> Tuple[str, str, str, str]:
+    text = _clean_text(text)
+    if not text:
+        return "", "", "", ""
+
+    tokens = text.split()
+    hall_index = -1
+    for index, token in enumerate(tokens):
+        cleaned = token.strip(",;/")
+        if re.fullmatch(r"(?:H\d{1,2}(?:\.\d)?[A-Za-z]?|CCB|SOM|Hub27|Hub\s*27)", cleaned, flags=re.IGNORECASE):
+            hall_index = index
+            break
+
+    if hall_index <= 0:
+        return "", "", "", ""
+
+    name_part = " ".join(tokens[:hall_index]).strip(" -/")
+    hall = tokens[hall_index].strip(",;/")
+    booth = ""
+
+    if hall_index + 1 < len(tokens):
+        candidate = tokens[hall_index + 1].strip(",;/")
+        if re.fullmatch(r"(?:H\d{1,2}(?:\.\d)?[A-Za-z]?|CCB|SOM|Hub27|Hub\s*27)?-?[A-Za-z]?\d{1,4}[A-Za-z]?|H\d{1,2}(?:\.\d)?[A-Za-z]?-\d{1,4}[A-Za-z]?", candidate, flags=re.IGNORECASE):
+            booth = candidate
+
+    country = ""
+    for suffix in sorted(COUNTRY_SUFFIXES, key=len, reverse=True):
+        if text.lower().endswith(suffix.lower()):
+            country = suffix
+            break
+
+    for phrase in sorted(SHOW_AREA_PHRASES, key=len, reverse=True):
+        pattern = re.compile(rf"\s+{re.escape(phrase)}$", flags=re.IGNORECASE)
+        name_part = pattern.sub("", name_part).strip(" -/")
+
+    return name_part, normalize_hall(hall), normalize_booth(booth), country
 
 
 def _is_valid_exhibitor(row: Dict[str, Any]) -> bool:
@@ -1054,7 +1296,7 @@ def extract_website_from_html(html: str, base_url: str) -> str:
 
 def _dedupe_exhibitors(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     best_by_key: Dict[str, Dict[str, Any]] = {}
-    method_rank = {"custom_selector": 5, "json": 4, "table": 4, "card": 3, "link": 1}
+    method_rank = {"custom_selector": 5, "brand_card": 5, "json": 4, "table": 4, "card": 3, "link": 1}
 
     for row in rows:
         name = normalize_company_name(row.get("exhibitor_name", ""))
@@ -1159,9 +1401,26 @@ def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 def _columns_look_headerless(columns: Sequence[str]) -> bool:
     if not columns:
         return True
+    header_keywords = {
+        "alias",
+        "aliases",
+        "brand",
+        "company",
+        "company name",
+        "firma",
+        "merchant",
+        "merchant name",
+        "name",
+        "seller",
+        "shop",
+        "skm",
+        "skm name",
+    }
+    normalized_columns = [str(col).strip().lower() for col in columns]
+    if len(normalized_columns) == 1 and normalized_columns[0] not in header_keywords:
+        return True
     bad = 0
-    for col in columns:
-        clean = str(col).strip()
+    for clean in normalized_columns:
         if not clean or clean.lower().startswith("unnamed"):
             bad += 1
     return bad / max(len(columns), 1) >= 0.5
@@ -1333,7 +1592,8 @@ def main() -> None:
                 st.error(f"Failed to read SKM file: {exc}")
 
         st.header("2. Scraping Settings")
-        max_pages = st.number_input("Maximum pages to scrape", min_value=1, max_value=50, value=1, step=1)
+        max_pages = st.number_input("Maximum pages to scrape", min_value=1, max_value=200, value=100, step=1)
+        auto_discover_exhibitor_directory = st.checkbox("Auto-detect exhibitor directory from homepage", value=True)
         crawl_detail_pages = st.checkbox("Crawl exhibitor detail pages", value=False)
         detail_page_limit = st.number_input("Detail page limit", min_value=1, max_value=500, value=50, step=10)
 
@@ -1373,6 +1633,7 @@ def main() -> None:
             website_selector=website_selector.strip(),
             detail_link_selector=detail_link_selector.strip(),
             crawl_detail_pages=crawl_detail_pages,
+            auto_discover_exhibitor_directory=auto_discover_exhibitor_directory,
             detail_page_limit=int(detail_page_limit),
         )
 
