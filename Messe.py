@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 import pandas as pd
 import requests
 import streamlit as st
+import altair as alt
 from bs4 import BeautifulSoup
 
 try:
@@ -1542,9 +1543,6 @@ def _read_table(uploaded_file) -> pd.DataFrame:
     return _read_table_source(uploaded_file, uploaded_file.name)
 
 
-    return _read_table_source(path, path.name)
-
-
 def _read_html(uploaded_file) -> str:
     raw = uploaded_file.read()
     for encoding in ["utf-8", "utf-16", "latin-1"]:
@@ -1593,7 +1591,7 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
 
 
 def _render_hall_map(skm_df: pd.DataFrame) -> None:
-    st.subheader("Hall Map")
+    st.subheader("SKM Hall Heatmap")
     if skm_df.empty:
         st.info("No SKM exhibitor leads found yet.")
         return
@@ -1603,66 +1601,42 @@ def _render_hall_map(skm_df: pd.DataFrame) -> None:
         st.info("No hall information found for SKM leads.")
         return
 
+    summary_df = summary_df.reset_index(drop=True)
+    cols = 6
+    summary_df["map_col"] = summary_df.index % cols
+    summary_df["map_row"] = summary_df.index // cols
+    summary_df["label"] = summary_df["hall"].astype(str) + "\n" + summary_df["skm_leads"].astype(str) + " SKM"
+    summary_df["countries_short"] = summary_df["countries"].astype(str).str.slice(0, 120)
+    summary_df["exhibitors_short"] = summary_df["exhibitors"].astype(str).str.slice(0, 220)
     halls = summary_df["hall"].tolist()
-    max_count = max(int(summary_df["skm_leads"].max()), 1)
 
-    css = """
-    <style>
-    .hall-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-        gap: 10px;
-        margin: 8px 0 18px 0;
-    }
-    .hall-tile {
-        border: 1px solid rgba(49, 51, 63, 0.16);
-        border-radius: 8px;
-        padding: 12px;
-        background: var(--hall-bg);
-        min-height: 92px;
-    }
-    .hall-name {
-        font-size: 18px;
-        font-weight: 700;
-        color: #252833;
-        margin-bottom: 8px;
-    }
-    .hall-count {
-        font-size: 28px;
-        line-height: 1;
-        font-weight: 800;
-        color: #d7334a;
-    }
-    .hall-caption {
-        font-size: 12px;
-        color: #5c6170;
-        margin-top: 6px;
-    }
-    </style>
-    """
-
-    tiles = []
-    for _, row in summary_df.iterrows():
-        count = int(row["skm_leads"])
-        intensity = 0.10 + 0.42 * (count / max_count)
-        bg = f"rgba(255, 77, 97, {intensity:.2f})"
-        hall = str(row["hall"])
-        countries = str(row.get("countries", ""))[:90]
-        tiles.append(
-            f"""
-            <div class="hall-tile" style="--hall-bg: {bg};">
-                <div class="hall-name">{hall}</div>
-                <div class="hall-count">{count}</div>
-                <div class="hall-caption">SKM leads</div>
-                <div class="hall-caption">{countries}</div>
-            </div>
-            """
+    base = alt.Chart(summary_df).encode(
+        x=alt.X("map_col:O", axis=None, title=None),
+        y=alt.Y("map_row:O", axis=None, title=None, sort="ascending"),
+        tooltip=[
+            alt.Tooltip("hall:N", title="Hall"),
+            alt.Tooltip("skm_leads:Q", title="SKM leads"),
+            alt.Tooltip("countries_short:N", title="Countries"),
+            alt.Tooltip("exhibitors_short:N", title="SKM examples"),
+        ],
+    )
+    heatmap = base.mark_rect(cornerRadius=6, stroke="#ffffff", strokeWidth=2).encode(
+        color=alt.Color(
+            "skm_leads:Q",
+            scale=alt.Scale(scheme="reds"),
+            legend=alt.Legend(title="SKM leads"),
         )
+    )
+    labels = base.mark_text(fontSize=13, fontWeight="bold", color="#252833", lineBreak="\n").encode(
+        text="label:N"
+    )
+    chart_height = max(240, int((summary_df["map_row"].max() + 1) * 95))
+    st.altair_chart((heatmap + labels).properties(height=chart_height), use_container_width=True)
 
-    st.markdown(css + '<div class="hall-grid">' + "".join(tiles) + "</div>", unsafe_allow_html=True)
-
-    selected_hall = st.selectbox("Click/select a hall to view SKM lead details", halls)
-    hall_rows = skm_df[skm_df["hall"].fillna("").replace("", "Unknown Hall") == selected_hall]
+    selected_hall = st.selectbox("Select a hall to view SKM merchant details", halls)
+    normalized_hall = skm_df["hall"].fillna("").replace("", "Unknown Hall")
+    hall_rows = skm_df[normalized_hall == selected_hall]
+    st.markdown(f"**{selected_hall}: {len(hall_rows)} SKM lead(s)**")
     st.dataframe(order_columns(sort_leads_by_hall(hall_rows)), use_container_width=True, hide_index=True)
 
 
