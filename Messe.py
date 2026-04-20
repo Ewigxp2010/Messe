@@ -460,7 +460,7 @@ class ScrapeConfig:
     crawl_detail_pages: bool = False
     auto_discover_exhibitor_directory: bool = True
     detail_page_limit: int = 50
-    request_delay_seconds: float = 0.25
+    request_delay_seconds: float = 0.6
     timeout_seconds: int = 25
     user_agent: str = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -470,6 +470,9 @@ class ScrapeConfig:
 
 class ScrapeError(RuntimeError):
     pass
+
+
+LAST_SCRAPE_WARNINGS: List[str] = []
 
 
 def _require_bs4():
@@ -492,6 +495,28 @@ def fetch_html(url: str, config: Optional[ScrapeConfig] = None) -> str:
     response.raise_for_status()
     response.encoding = response.apparent_encoding or response.encoding
     return response.text
+
+
+def fetch_html_with_retry(url: str, config: Optional[ScrapeConfig] = None, retries: int = 3) -> str:
+    last_error: Optional[Exception] = None
+    for attempt in range(retries):
+        try:
+            return fetch_html(url, config)
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            last_error = exc
+            if status_code not in {429, 500, 502, 503, 504} or attempt == retries - 1:
+                raise
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == retries - 1:
+                raise
+
+        time.sleep(1.5 * (attempt + 1))
+
+    if last_error:
+        raise last_error
+    raise ScrapeError(f"Failed to fetch {url}")
 
 
 def parse_exhibitors_from_html(html: str, base_url: str = "", config: Optional[ScrapeConfig] = None) -> List[Dict[str, Any]]:
@@ -518,11 +543,25 @@ def parse_exhibitors_from_html(html: str, base_url: str = "", config: Optional[S
 
 
 def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
+    LAST_SCRAPE_WARNINGS.clear()
     urls = _build_page_urls(config)
     all_rows: List[Dict[str, Any]] = []
 
     for index, url in enumerate(urls):
-        html = fetch_html(url, config)
+        try:
+            html = fetch_html_with_retry(url, config)
+        except requests.HTTPError as exc:
+            message = f"Skipped {url}: HTTP {exc.response.status_code if exc.response is not None else 'error'}"
+            LAST_SCRAPE_WARNINGS.append(message)
+            if index == 0:
+                raise
+            continue
+        except requests.RequestException as exc:
+            LAST_SCRAPE_WARNINGS.append(f"Skipped {url}: {exc}")
+            if index == 0:
+                raise
+            continue
+
         if (
             index == 0
             and config.auto_discover_exhibitor_directory
@@ -533,7 +572,7 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
             if discovered_url and discovered_url not in urls:
                 urls[0] = discovered_url
                 url = discovered_url
-                html = fetch_html(url, config)
+                html = fetch_html_with_retry(url, config)
 
         page_rows = parse_exhibitors_from_html(html, base_url=url, config=config)
         all_rows.extend(page_rows)
@@ -614,7 +653,7 @@ def enrich_from_detail_pages(rows: Sequence[Dict[str, Any]], config: ScrapeConfi
         ):
             visited.add(detail_url)
             try:
-                html = fetch_html(detail_url, config)
+                html = fetch_html_with_retry(detail_url, config, retries=2)
                 text = _html_to_text(html)
                 hall, booth = extract_hall_booth(text)
                 country = extract_country(text)
@@ -1739,6 +1778,8 @@ def main() -> None:
                 else:
                     exhibitors = scrape_exhibitors(config)
                 status.write(f"Found {len(exhibitors)} exhibitor candidates")
+                if LAST_SCRAPE_WARNINGS:
+                    status.write(f"Skipped {len(LAST_SCRAPE_WARNINGS)} page(s) after retry. Results may be slightly incomplete.")
 
                 matched = match_exhibitors_to_skm(
                     exhibitors=exhibitors,
@@ -1756,6 +1797,12 @@ def main() -> None:
                 return
 
             result_df = pd.DataFrame(matched)
+            if LAST_SCRAPE_WARNINGS:
+                with st.expander("Scrape warnings"):
+                    for warning in LAST_SCRAPE_WARNINGS[:25]:
+                        st.warning(warning)
+                    if len(LAST_SCRAPE_WARNINGS) > 25:
+                        st.warning(f"...and {len(LAST_SCRAPE_WARNINGS) - 25} more skipped pages.")
             _render_results(result_df)
 
         except ScrapeError as exc:
