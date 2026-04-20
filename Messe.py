@@ -1326,37 +1326,35 @@ def _row_completeness(row: Dict[str, Any]) -> int:
 
 EXPORT_COLUMNS = [
     "match_status",
-    "match_score",
-    "skm_name",
-    "skm_compare_name",
-    "skm_compare_type",
     "exhibitor_name",
     "hall",
     "booth",
     "country",
+    "show_area",
     "website",
     "detail_url",
     "source_url",
-    "extraction_method",
 ]
 
 
 def order_columns(df: pd.DataFrame) -> pd.DataFrame:
     first = [col for col in EXPORT_COLUMNS if col in df.columns]
-    remaining = [col for col in df.columns if col not in first and col != "raw_text"]
-    tail = ["raw_text"] if "raw_text" in df.columns else []
-    return df[first + remaining + tail]
+    return df[first]
+
+
+def skm_leads(df: pd.DataFrame) -> pd.DataFrame:
+    if "match_status" not in df.columns:
+        return df.head(0)
+    return df[df["match_status"].isin(["SKM Match", "Needs Review"])].copy()
 
 
 def build_excel_download(all_df: pd.DataFrame) -> bytes:
     output = BytesIO()
-    matches = all_df[all_df["match_status"] == "SKM Match"].copy() if "match_status" in all_df.columns else all_df.head(0)
-    review = all_df[all_df["match_status"] == "Needs Review"].copy() if "match_status" in all_df.columns else all_df.head(0)
+    skm_df = skm_leads(all_df)
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        order_columns(matches).to_excel(writer, sheet_name="SKM Matches", index=False)
-        order_columns(review).to_excel(writer, sheet_name="Needs Review", index=False)
-        order_columns(all_df).to_excel(writer, sheet_name="All Exhibitors", index=False)
+        order_columns(skm_df).to_excel(writer, sheet_name="SKM Exhibitor Leads", index=False)
+        order_columns(all_df).to_excel(writer, sheet_name="All Exhibitor Leads", index=False)
         _autosize_workbook(writer.sheets)
 
     return output.getvalue()
@@ -1509,7 +1507,7 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
     dl1, dl2 = st.columns(2)
     with dl1:
         st.download_button(
-            "Download Excel Lead List",
+            "Download Excel Leads",
             data=excel_bytes,
             file_name="tiktok_shop_skm_exhibition_matches.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1517,9 +1515,9 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
         )
     with dl2:
         st.download_button(
-            "Download Full CSV",
+            "Download All Exhibitor CSV",
             data=csv_bytes,
-            file_name="tiktok_shop_skm_exhibition_matches.csv",
+            file_name="all_exhibitor_leads.csv",
             mime="text/csv",
             use_container_width=True,
         )
@@ -1527,29 +1525,21 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
 
 def _render_results(result_df: pd.DataFrame) -> None:
     summary = summarize_matches(_safe_records(result_df))
-    metric_cols = st.columns(4)
+    metric_cols = st.columns(3)
     metric_cols[0].metric("Total Exhibitors", summary["total"])
-    metric_cols[1].metric("SKM Matches", summary["skm_matches"])
+    metric_cols[1].metric("SKM Exhibitor Leads", summary["skm_matches"])
     metric_cols[2].metric("Needs Review", summary["review"])
-    metric_cols[3].metric("No Match", summary["unmatched"])
 
     _render_downloads(result_df)
 
-    matches_df = result_df[result_df["match_status"] == "SKM Match"].copy()
-    review_df = result_df[result_df["match_status"] == "Needs Review"].copy()
+    skm_df = skm_leads(result_df)
 
-    tab_matches, tab_review, tab_all = st.tabs(["SKM Matches", "Needs Review", "All Exhibitors"])
-    with tab_matches:
+    tab_skm, tab_all = st.tabs(["SKM Exhibitor Leads", "All Exhibitor Leads"])
+    with tab_skm:
+        if not skm_df.empty:
+            skm_df = skm_df.sort_values(["match_status", "hall", "exhibitor_name"], ascending=[True, True, True])
         st.dataframe(
-            order_columns(matches_df).sort_values(["hall", "match_score"], ascending=[True, False])
-            if not matches_df.empty
-            else matches_df,
-            use_container_width=True,
-            hide_index=True,
-        )
-    with tab_review:
-        st.dataframe(
-            order_columns(review_df).sort_values("match_score", ascending=False) if not review_df.empty else review_df,
+            order_columns(skm_df),
             use_container_width=True,
             hide_index=True,
         )
