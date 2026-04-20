@@ -1342,19 +1342,49 @@ def order_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df[first]
 
 
+def sort_leads_by_hall(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    sort_cols = [col for col in ["hall", "booth", "exhibitor_name"] if col in df.columns]
+    if not sort_cols:
+        return df
+    return df.sort_values(sort_cols, kind="stable")
+
+
 def skm_leads(df: pd.DataFrame) -> pd.DataFrame:
     if "match_status" not in df.columns:
         return df.head(0)
     return df[df["match_status"].isin(["SKM Match", "Needs Review"])].copy()
 
 
+def hall_summary(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "hall" not in df.columns:
+        return pd.DataFrame(columns=["hall", "skm_leads", "countries", "exhibitors"])
+
+    working = df.copy()
+    working["hall"] = working["hall"].fillna("").replace("", "Unknown Hall")
+    grouped = (
+        working.groupby("hall", dropna=False)
+        .agg(
+            skm_leads=("exhibitor_name", "count"),
+            countries=("country", lambda values: ", ".join(sorted({str(v) for v in values if str(v).strip()}))),
+            exhibitors=("exhibitor_name", lambda values: ", ".join(sorted({str(v) for v in values if str(v).strip()}))),
+        )
+        .reset_index()
+    )
+    return grouped.sort_values(["skm_leads", "hall"], ascending=[False, True])
+
+
 def build_excel_download(all_df: pd.DataFrame) -> bytes:
     output = BytesIO()
-    skm_df = skm_leads(all_df)
+    skm_df = sort_leads_by_hall(skm_leads(all_df))
+    all_sorted = sort_leads_by_hall(all_df)
+    summary_df = hall_summary(skm_df)
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="SKM by Hall", index=False)
         order_columns(skm_df).to_excel(writer, sheet_name="SKM Exhibitor Leads", index=False)
-        order_columns(all_df).to_excel(writer, sheet_name="All Exhibitor Leads", index=False)
+        order_columns(all_sorted).to_excel(writer, sheet_name="All Exhibitor Leads", index=False)
         _autosize_workbook(writer.sheets)
 
     return output.getvalue()
@@ -1500,7 +1530,7 @@ def _safe_records(df: pd.DataFrame) -> List[Dict[str, object]]:
 
 
 def _render_downloads(result_df: pd.DataFrame) -> None:
-    ordered = order_columns(result_df)
+    ordered = order_columns(sort_leads_by_hall(result_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
     excel_bytes = build_excel_download(ordered)
 
@@ -1523,6 +1553,80 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
         )
 
 
+def _render_hall_map(skm_df: pd.DataFrame) -> None:
+    st.subheader("Hall Map")
+    if skm_df.empty:
+        st.info("No SKM exhibitor leads found yet.")
+        return
+
+    summary_df = hall_summary(skm_df)
+    if summary_df.empty:
+        st.info("No hall information found for SKM leads.")
+        return
+
+    halls = summary_df["hall"].tolist()
+    max_count = max(int(summary_df["skm_leads"].max()), 1)
+
+    css = """
+    <style>
+    .hall-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        gap: 10px;
+        margin: 8px 0 18px 0;
+    }
+    .hall-tile {
+        border: 1px solid rgba(49, 51, 63, 0.16);
+        border-radius: 8px;
+        padding: 12px;
+        background: var(--hall-bg);
+        min-height: 92px;
+    }
+    .hall-name {
+        font-size: 18px;
+        font-weight: 700;
+        color: #252833;
+        margin-bottom: 8px;
+    }
+    .hall-count {
+        font-size: 28px;
+        line-height: 1;
+        font-weight: 800;
+        color: #d7334a;
+    }
+    .hall-caption {
+        font-size: 12px;
+        color: #5c6170;
+        margin-top: 6px;
+    }
+    </style>
+    """
+
+    tiles = []
+    for _, row in summary_df.iterrows():
+        count = int(row["skm_leads"])
+        intensity = 0.10 + 0.42 * (count / max_count)
+        bg = f"rgba(255, 77, 97, {intensity:.2f})"
+        hall = str(row["hall"])
+        countries = str(row.get("countries", ""))[:90]
+        tiles.append(
+            f"""
+            <div class="hall-tile" style="--hall-bg: {bg};">
+                <div class="hall-name">{hall}</div>
+                <div class="hall-count">{count}</div>
+                <div class="hall-caption">SKM leads</div>
+                <div class="hall-caption">{countries}</div>
+            </div>
+            """
+        )
+
+    st.markdown(css + '<div class="hall-grid">' + "".join(tiles) + "</div>", unsafe_allow_html=True)
+
+    selected_hall = st.selectbox("Click/select a hall to view SKM lead details", halls)
+    hall_rows = skm_df[skm_df["hall"].fillna("").replace("", "Unknown Hall") == selected_hall]
+    st.dataframe(order_columns(sort_leads_by_hall(hall_rows)), use_container_width=True, hide_index=True)
+
+
 def _render_results(result_df: pd.DataFrame) -> None:
     summary = summarize_matches(_safe_records(result_df))
     metric_cols = st.columns(3)
@@ -1532,19 +1636,19 @@ def _render_results(result_df: pd.DataFrame) -> None:
 
     _render_downloads(result_df)
 
-    skm_df = skm_leads(result_df)
+    skm_df = sort_leads_by_hall(skm_leads(result_df))
 
-    tab_skm, tab_all = st.tabs(["SKM Exhibitor Leads", "All Exhibitor Leads"])
+    tab_map, tab_skm, tab_all = st.tabs(["Hall Map", "SKM Exhibitor Leads", "All Exhibitor Leads"])
+    with tab_map:
+        _render_hall_map(skm_df)
     with tab_skm:
-        if not skm_df.empty:
-            skm_df = skm_df.sort_values(["match_status", "hall", "exhibitor_name"], ascending=[True, True, True])
         st.dataframe(
             order_columns(skm_df),
             use_container_width=True,
             hide_index=True,
         )
     with tab_all:
-        st.dataframe(order_columns(result_df), use_container_width=True, hide_index=True)
+        st.dataframe(order_columns(sort_leads_by_hall(result_df)), use_container_width=True, hide_index=True)
 
 
 def main() -> None:
