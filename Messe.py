@@ -5,9 +5,11 @@ import hashlib
 import re
 import time
 import unicodedata
+from collections import defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
@@ -22,6 +24,7 @@ try:
 except Exception:
     fuzz = None
 
+BUILTIN_SKM_PATH = Path("data/skm_base.csv")
 
 # =========================
 # SKM matching
@@ -300,6 +303,54 @@ def _best_candidate(exhibitor_name: str, candidates: Sequence[SkmCandidate]) -> 
     return best_candidate, round(best_score, 1)
 
 
+def _build_candidate_indexes(candidates: Sequence[SkmCandidate]) -> Tuple[Dict[str, SkmCandidate], Dict[str, List[int]]]:
+    exact_lookup: Dict[str, SkmCandidate] = {}
+    token_index: Dict[str, List[int]] = defaultdict(list)
+
+    for index, candidate in enumerate(candidates):
+        if candidate.normalized and candidate.normalized not in exact_lookup:
+            exact_lookup[candidate.normalized] = candidate
+
+        tokens = _meaningful_tokens(candidate.normalized)
+        if not tokens:
+            tokens = set(candidate.normalized.split())
+        for token in tokens:
+            token_index[token].append(index)
+
+    return exact_lookup, token_index
+
+
+def _candidate_pool_for_exhibitor(
+    exhibitor_name: str,
+    candidates: Sequence[SkmCandidate],
+    exact_lookup: Dict[str, SkmCandidate],
+    token_index: Dict[str, List[int]],
+) -> Tuple[Optional[SkmCandidate], float, Sequence[SkmCandidate]]:
+    exhibitor_norm = normalize_company_name(exhibitor_name)
+    if not exhibitor_norm:
+        return None, 0.0, []
+
+    exact = exact_lookup.get(exhibitor_norm)
+    if exact is not None:
+        return exact, 100.0, []
+
+    tokens = _meaningful_tokens(exhibitor_norm)
+    if not tokens:
+        tokens = set(exhibitor_norm.split())
+
+    pool_indexes = set()
+    for token in tokens:
+        pool_indexes.update(token_index.get(token, []))
+
+    if pool_indexes:
+        return None, 0.0, [candidates[index] for index in pool_indexes]
+
+    # Avoid scanning a 10k+ SKM base for unrelated names; this keeps app runs stable.
+    if len(candidates) <= 3000:
+        return None, 0.0, candidates
+    return None, 0.0, []
+
+
 def match_exhibitors_to_skm(
     exhibitors: Sequence[Dict[str, Any]],
     skm_rows: Sequence[Dict[str, Any]],
@@ -310,13 +361,25 @@ def match_exhibitors_to_skm(
 ) -> List[Dict[str, Any]]:
     """Return exhibitors enriched with SKM matching columns."""
     candidates = build_skm_candidates(skm_rows, name_col=name_col, alias_cols=alias_cols)
+    exact_lookup, token_index = _build_candidate_indexes(candidates)
     review_threshold = max(0.0, threshold - review_margin)
     output: List[Dict[str, Any]] = []
 
     for exhibitor in exhibitors:
         row = dict(exhibitor)
         exhibitor_name = str(row.get("exhibitor_name", "")).strip()
-        candidate, score = _best_candidate(exhibitor_name, candidates)
+        exact_candidate, exact_score, candidate_pool = _candidate_pool_for_exhibitor(
+            exhibitor_name,
+            candidates,
+            exact_lookup,
+            token_index,
+        )
+        if exact_candidate is not None:
+            candidate, score = exact_candidate, exact_score
+        elif candidate_pool:
+            candidate, score = _best_candidate(exhibitor_name, candidate_pool)
+        else:
+            candidate, score = None, 0.0
 
         row["normalized_exhibitor_name"] = normalize_company_name(exhibitor_name)
         row["match_score"] = score
@@ -1579,6 +1642,13 @@ def _read_table(uploaded_file) -> pd.DataFrame:
     return _read_table_source(uploaded_file, uploaded_file.name)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _read_builtin_skm() -> pd.DataFrame:
+    if not BUILTIN_SKM_PATH.exists():
+        return pd.DataFrame()
+    return _read_table_source(BUILTIN_SKM_PATH, BUILTIN_SKM_PATH.name)
+
+
 def _read_html(uploaded_file) -> str:
     raw = uploaded_file.read()
     for encoding in ["utf-8", "utf-16", "latin-1"]:
@@ -1723,8 +1793,10 @@ def main() -> None:
 
     with st.sidebar:
         st.header("1. SKM List")
-        st.caption("Upload your SKM list here. Excel and CSV files are supported.")
-        skm_upload = st.file_uploader("Upload SKM Excel/CSV", type=["xlsx", "xls", "csv", "tsv"])
+        st.caption("Use the built-in SKM base, or upload a different SKM file if needed.")
+        has_builtin_skm = BUILTIN_SKM_PATH.exists()
+        use_builtin_skm = st.checkbox("Use built-in SKM base", value=has_builtin_skm, disabled=not has_builtin_skm)
+        skm_upload = st.file_uploader("Upload different SKM Excel/CSV", type=["xlsx", "xls", "csv", "tsv"])
 
         skm_df = None
         name_col = ""
@@ -1732,7 +1804,16 @@ def main() -> None:
         threshold = st.slider("Match threshold", min_value=70, max_value=100, value=88, step=1)
         review_margin = st.slider("Manual review range", min_value=0, max_value=20, value=8, step=1)
 
-        if skm_upload is not None:
+        if use_builtin_skm and has_builtin_skm:
+            try:
+                skm_df = _read_builtin_skm()
+                st.success(f"Loaded built-in SKM base: {len(skm_df)} rows")
+                columns = list(skm_df.columns)
+                name_col = "SKM Name" if "SKM Name" in columns else columns[0]
+                alias_cols = [col for col in columns if col != name_col and col.lower().startswith("alias")]
+            except Exception as exc:
+                st.error(f"Failed to read built-in SKM base: {exc}")
+        elif skm_upload is not None:
             try:
                 skm_df = _read_table(skm_upload)
                 skm_df.columns = [str(col).strip() for col in skm_df.columns]
@@ -1816,7 +1897,7 @@ def main() -> None:
                 review_margin,
                 name_col,
                 alias_cols,
-                _file_fingerprint(skm_upload),
+                "builtin_skm" if use_builtin_skm else _file_fingerprint(skm_upload),
                 _file_fingerprint(html_upload),
             ]
         )
