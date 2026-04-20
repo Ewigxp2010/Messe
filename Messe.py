@@ -318,7 +318,7 @@ def match_exhibitors_to_skm(
 
         row["normalized_exhibitor_name"] = normalize_company_name(exhibitor_name)
         row["match_score"] = score
-        row["match_status"] = "未命中"
+        row["match_status"] = "No Match"
         row["match_type"] = ""
         row["skm_name"] = ""
         row["skm_compare_name"] = ""
@@ -327,9 +327,9 @@ def match_exhibitors_to_skm(
 
         if candidate is not None and score >= review_threshold:
             if score >= threshold:
-                row["match_status"] = "SKM命中"
+                row["match_status"] = "SKM Match"
             else:
-                row["match_status"] = "待人工确认"
+                row["match_status"] = "Needs Review"
             row["match_type"] = "exact" if score == 100.0 else "fuzzy"
             row["skm_name"] = candidate.skm_name
             row["skm_compare_name"] = candidate.compare_name
@@ -348,9 +348,9 @@ def summarize_matches(rows: Iterable[Dict[str, Any]]) -> Dict[str, int]:
     for row in rows:
         summary["total"] += 1
         status = row.get("match_status")
-        if status == "SKM命中":
+        if status == "SKM Match":
             summary["skm_matches"] += 1
-        elif status == "待人工确认":
+        elif status == "Needs Review":
             summary["review"] += 1
         else:
             summary["unmatched"] += 1
@@ -437,7 +437,7 @@ def _require_bs4():
     try:
         from bs4 import BeautifulSoup  # type: ignore
     except Exception as exc:  # pragma: no cover - environment dependent
-        raise ScrapeError("缺少 beautifulsoup4，请先运行 pip install -r requirements.txt") from exc
+        raise ScrapeError("Missing beautifulsoup4. Please install dependencies from requirements.txt.") from exc
     return BeautifulSoup
 
 
@@ -445,7 +445,7 @@ def fetch_html(url: str, config: Optional[ScrapeConfig] = None) -> str:
     try:
         import requests  # type: ignore
     except Exception as exc:  # pragma: no cover - environment dependent
-        raise ScrapeError("缺少 requests，请先运行 pip install -r requirements.txt") from exc
+        raise ScrapeError("Missing requests. Please install dependencies from requirements.txt.") from exc
 
     cfg = config or ScrapeConfig(url=url)
     headers = {"User-Agent": cfg.user_agent, "Accept-Language": "de-DE,de;q=0.9,en;q=0.8"}
@@ -1108,13 +1108,13 @@ def order_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_excel_download(all_df: pd.DataFrame) -> bytes:
     output = BytesIO()
-    matches = all_df[all_df["match_status"] == "SKM命中"].copy() if "match_status" in all_df.columns else all_df.head(0)
-    review = all_df[all_df["match_status"] == "待人工确认"].copy() if "match_status" in all_df.columns else all_df.head(0)
+    matches = all_df[all_df["match_status"] == "SKM Match"].copy() if "match_status" in all_df.columns else all_df.head(0)
+    review = all_df[all_df["match_status"] == "Needs Review"].copy() if "match_status" in all_df.columns else all_df.head(0)
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        order_columns(matches).to_excel(writer, sheet_name="SKM命中", index=False)
-        order_columns(review).to_excel(writer, sheet_name="待人工确认", index=False)
-        order_columns(all_df).to_excel(writer, sheet_name="全部参展商", index=False)
+        order_columns(matches).to_excel(writer, sheet_name="SKM Matches", index=False)
+        order_columns(review).to_excel(writer, sheet_name="Needs Review", index=False)
+        order_columns(all_df).to_excel(writer, sheet_name="All Exhibitors", index=False)
         _autosize_workbook(writer.sheets)
 
     return output.getvalue()
@@ -1135,7 +1135,7 @@ def _autosize_workbook(sheets: Dict[str, object]) -> None:
 # =========================
 
 st.set_page_config(
-    page_title="TikTok Shop SKM 展会招商雷达",
+    page_title="TikTok Shop SKM Exhibition Radar",
     page_icon="TS",
     layout="wide",
 )
@@ -1250,7 +1250,7 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
     dl1, dl2 = st.columns(2)
     with dl1:
         st.download_button(
-            "下载 Excel 招商表",
+            "Download Excel Lead List",
             data=excel_bytes,
             file_name="tiktok_shop_skm_exhibition_matches.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1258,7 +1258,7 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
         )
     with dl2:
         st.download_button(
-            "下载 CSV 全量表",
+            "Download Full CSV",
             data=csv_bytes,
             file_name="tiktok_shop_skm_exhibition_matches.csv",
             mime="text/csv",
@@ -1269,17 +1269,17 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
 def _render_results(result_df: pd.DataFrame) -> None:
     summary = summarize_matches(_safe_records(result_df))
     metric_cols = st.columns(4)
-    metric_cols[0].metric("参展商总数", summary["total"])
-    metric_cols[1].metric("SKM 命中", summary["skm_matches"])
-    metric_cols[2].metric("待人工确认", summary["review"])
-    metric_cols[3].metric("未命中", summary["unmatched"])
+    metric_cols[0].metric("Total Exhibitors", summary["total"])
+    metric_cols[1].metric("SKM Matches", summary["skm_matches"])
+    metric_cols[2].metric("Needs Review", summary["review"])
+    metric_cols[3].metric("No Match", summary["unmatched"])
 
     _render_downloads(result_df)
 
-    matches_df = result_df[result_df["match_status"] == "SKM命中"].copy()
-    review_df = result_df[result_df["match_status"] == "待人工确认"].copy()
+    matches_df = result_df[result_df["match_status"] == "SKM Match"].copy()
+    review_df = result_df[result_df["match_status"] == "Needs Review"].copy()
 
-    tab_matches, tab_review, tab_all = st.tabs(["SKM 命中", "待人工确认", "全部参展商"])
+    tab_matches, tab_review, tab_all = st.tabs(["SKM Matches", "Needs Review", "All Exhibitors"])
     with tab_matches:
         st.dataframe(
             order_columns(matches_df).sort_values(["hall", "match_score"], ascending=[True, False])
@@ -1299,61 +1299,66 @@ def _render_results(result_df: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    st.title("TikTok Shop SKM 展会招商雷达")
-    st.caption("输入德国展会参展商页面，上传 Strategic Key Merchant 名单，自动找出值得优先招商的参展商。")
+    st.title("TikTok Shop SKM Exhibition Radar")
+    st.caption(
+        "Upload your Strategic Key Merchant list, enter an exhibitor directory URL, "
+        "and identify priority merchants with hall and booth information."
+    )
 
     with st.sidebar:
-        st.header("SKM 名单")
-        skm_upload = st.file_uploader("上传 SKM Excel/CSV", type=["xlsx", "xls", "csv", "tsv"])
+        st.header("1. SKM List")
+        st.caption("Upload your SKM list here. Excel and CSV files are supported.")
+        skm_upload = st.file_uploader("Upload SKM Excel/CSV", type=["xlsx", "xls", "csv", "tsv"])
 
         skm_df = None
         name_col = ""
         alias_cols: List[str] = []
-        threshold = st.slider("匹配阈值", min_value=70, max_value=100, value=88, step=1)
-        review_margin = st.slider("人工复核区间", min_value=0, max_value=20, value=8, step=1)
+        threshold = st.slider("Match threshold", min_value=70, max_value=100, value=88, step=1)
+        review_margin = st.slider("Manual review range", min_value=0, max_value=20, value=8, step=1)
 
         if skm_upload is not None:
             try:
                 skm_df = _read_table(skm_upload)
                 skm_df.columns = [str(col).strip() for col in skm_df.columns]
-                st.success(f"已读取 {len(skm_df)} 条 SKM")
+                st.success(f"Loaded {len(skm_df)} SKM rows")
                 columns = list(skm_df.columns)
                 guessed = _column_guess(columns, ["skm", "merchant", "company", "brand", "name", "firma"])
-                name_col = st.selectbox("SKM 公司名列", columns, index=columns.index(guessed))
+                name_col = st.selectbox("SKM company name column", columns, index=columns.index(guessed))
                 alias_cols = st.multiselect(
-                    "Alias/品牌/店铺名列",
+                    "Alias / brand / shop name columns",
                     [col for col in columns if col != name_col],
                     default=[col for col in columns if col.lower() in {"alias", "aliases", "brand", "shop"}],
                 )
             except Exception as exc:
-                st.error(f"SKM 文件读取失败：{exc}")
+                st.error(f"Failed to read SKM file: {exc}")
 
-        st.header("抓取设置")
-        max_pages = st.number_input("最多抓取页数", min_value=1, max_value=50, value=1, step=1)
-        crawl_detail_pages = st.checkbox("补抓参展商详情页", value=False)
-        detail_page_limit = st.number_input("详情页上限", min_value=1, max_value=500, value=50, step=10)
+        st.header("2. Scraping Settings")
+        max_pages = st.number_input("Maximum pages to scrape", min_value=1, max_value=50, value=1, step=1)
+        crawl_detail_pages = st.checkbox("Crawl exhibitor detail pages", value=False)
+        detail_page_limit = st.number_input("Detail page limit", min_value=1, max_value=500, value=50, step=10)
 
-        with st.expander("高级抓取设置"):
-            page_url_template = st.text_input("分页 URL 模板", placeholder="https://example.com/exhibitors?page={page}")
-            item_selector = st.text_input("参展商卡片 selector", placeholder=".exhibitor-card")
-            name_selector = st.text_input("公司名 selector", placeholder=".exhibitor-name")
-            hall_selector = st.text_input("展厅 selector", placeholder=".hall")
-            booth_selector = st.text_input("展位 selector", placeholder=".booth")
-            country_selector = st.text_input("国家 selector", placeholder=".country")
-            website_selector = st.text_input("官网 selector", placeholder="a.website")
-            detail_link_selector = st.text_input("详情页链接 selector", placeholder="a.detail")
+        with st.expander("Advanced scraping settings"):
+            page_url_template = st.text_input("Pagination URL template", placeholder="https://example.com/exhibitors?page={page}")
+            item_selector = st.text_input("Exhibitor card selector", placeholder=".exhibitor-card")
+            name_selector = st.text_input("Company name selector", placeholder=".exhibitor-name")
+            hall_selector = st.text_input("Hall selector", placeholder=".hall")
+            booth_selector = st.text_input("Booth selector", placeholder=".booth")
+            country_selector = st.text_input("Country selector", placeholder=".country")
+            website_selector = st.text_input("Website selector", placeholder="a.website")
+            detail_link_selector = st.text_input("Detail page link selector", placeholder="a.detail")
 
     left, right = st.columns([2, 1])
     with left:
-        url = st.text_input("展会参展商页面 URL", placeholder="https://www.example-messe.de/exhibitors")
+        url = st.text_input("Exhibitor directory URL", placeholder="https://www.example-messe.de/exhibitors")
     with right:
-        html_upload = st.file_uploader("或上传页面 HTML", type=["html", "htm"])
+        st.caption("Optional fallback for JavaScript-heavy sites")
+        html_upload = st.file_uploader("Upload exhibitor page HTML", type=["html", "htm"])
 
     can_run = skm_df is not None and bool(name_col) and (bool(url) or html_upload is not None)
-    run = st.button("开始抓取并匹配", type="primary", disabled=not can_run, use_container_width=True)
+    run = st.button("Scrape and Match", type="primary", disabled=not can_run, use_container_width=True)
 
     if not can_run:
-        st.info("请先上传 SKM 名单，并输入展会 URL 或上传页面 HTML。")
+        st.info("Upload an SKM Excel/CSV file, then enter an exhibitor URL or upload exhibitor page HTML.")
 
     if run:
         config = ScrapeConfig(
@@ -1372,13 +1377,13 @@ def main() -> None:
         )
 
         try:
-            with st.status("正在抓取参展商...", expanded=True) as status:
+            with st.status("Scraping exhibitors...", expanded=True) as status:
                 if html_upload is not None:
                     html = _read_html(html_upload)
                     exhibitors = parse_exhibitors_from_html(html, base_url=url, config=config)
                 else:
                     exhibitors = scrape_exhibitors(config)
-                status.write(f"抓取到 {len(exhibitors)} 条候选参展商")
+                status.write(f"Found {len(exhibitors)} exhibitor candidates")
 
                 matched = match_exhibitors_to_skm(
                     exhibitors=exhibitors,
@@ -1388,11 +1393,11 @@ def main() -> None:
                     threshold=float(threshold),
                     review_margin=float(review_margin),
                 )
-                status.write("SKM 匹配完成")
-                status.update(label="完成", state="complete", expanded=False)
+                status.write("SKM matching complete")
+                status.update(label="Complete", state="complete", expanded=False)
 
             if not matched:
-                st.warning("没有抓取到参展商。可以尝试上传页面 HTML，或在高级设置里填写 CSS selector。")
+                st.warning("No exhibitors were found. Try uploading page HTML or entering CSS selectors in Advanced settings.")
                 return
 
             result_df = pd.DataFrame(matched)
