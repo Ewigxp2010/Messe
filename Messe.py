@@ -1493,7 +1493,13 @@ def sort_leads_by_hall(df: pd.DataFrame) -> pd.DataFrame:
 def skm_leads(df: pd.DataFrame) -> pd.DataFrame:
     if "match_status" not in df.columns:
         return df.head(0)
-    return df[df["match_status"].isin(["SKM Match", "Needs Review"])].copy()
+    return df[df["match_status"] == "SKM Match"].copy()
+
+
+def review_leads(df: pd.DataFrame) -> pd.DataFrame:
+    if "match_status" not in df.columns:
+        return df.head(0)
+    return df[df["match_status"] == "Needs Review"].copy()
 
 
 def hall_summary(df: pd.DataFrame) -> pd.DataFrame:
@@ -1501,6 +1507,9 @@ def hall_summary(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["hall", "skm_leads", "countries", "exhibitors"])
 
     working = df.copy()
+    for col in ["country", "exhibitor_name"]:
+        if col not in working.columns:
+            working[col] = ""
     working["hall"] = working["hall"].fillna("").replace("", "Unknown Hall")
     grouped = (
         working.groupby("hall", dropna=False)
@@ -1517,12 +1526,15 @@ def hall_summary(df: pd.DataFrame) -> pd.DataFrame:
 def build_excel_download(all_df: pd.DataFrame) -> bytes:
     output = BytesIO()
     skm_df = sort_leads_by_hall(skm_leads(all_df))
+    review_df = sort_leads_by_hall(review_leads(all_df))
     all_sorted = sort_leads_by_hall(all_df)
     summary_df = hall_summary(skm_df)
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         summary_df.to_excel(writer, sheet_name="SKM by Hall", index=False)
         order_columns(skm_df).to_excel(writer, sheet_name="SKM Exhibitor Leads", index=False)
+        if not review_df.empty:
+            order_columns(review_df).to_excel(writer, sheet_name="Possible Matches", index=False)
         order_columns(all_sorted).to_excel(writer, sheet_name="All Exhibitor Leads", index=False)
         _autosize_workbook(writer.sheets)
 
@@ -1646,7 +1658,13 @@ def _read_table(uploaded_file) -> pd.DataFrame:
 def _read_builtin_skm() -> pd.DataFrame:
     if not BUILTIN_SKM_PATH.exists():
         return pd.DataFrame()
-    return _read_table_source(BUILTIN_SKM_PATH, BUILTIN_SKM_PATH.name)
+    text = BUILTIN_SKM_PATH.read_text(encoding="utf-8-sig", errors="ignore")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return pd.DataFrame(columns=["SKM Name"])
+    if lines[0].strip().lower() in {"skm name", "skm", "name", "merchant", "merchant name"}:
+        lines = lines[1:]
+    return pd.DataFrame({"SKM Name": lines})
 
 
 def _read_html(uploaded_file) -> str:
@@ -1770,8 +1788,15 @@ def _render_results(result_df: pd.DataFrame) -> None:
     _render_downloads(result_df)
 
     skm_df = sort_leads_by_hall(skm_leads(result_df))
+    review_df = sort_leads_by_hall(review_leads(result_df))
 
-    tab_map, tab_skm, tab_all = st.tabs(["Hall Map", "SKM Exhibitor Leads", "All Exhibitor Leads"])
+    tabs = ["Hall Map", "SKM Exhibitor Leads", "All Exhibitor Leads"]
+    if not review_df.empty:
+        tabs.insert(2, "Possible Matches")
+    rendered_tabs = st.tabs(tabs)
+    tab_map = rendered_tabs[0]
+    tab_skm = rendered_tabs[1]
+    tab_all = rendered_tabs[-1]
     with tab_map:
         _render_hall_map(skm_df)
     with tab_skm:
@@ -1780,6 +1805,10 @@ def _render_results(result_df: pd.DataFrame) -> None:
             use_container_width=True,
             hide_index=True,
         )
+    if not review_df.empty:
+        with rendered_tabs[2]:
+            st.caption("These are lower-confidence fuzzy matches. Use them only as a backup review list.")
+            st.dataframe(order_columns(review_df), use_container_width=True, hide_index=True)
     with tab_all:
         st.dataframe(order_columns(sort_leads_by_hall(result_df)), use_container_width=True, hide_index=True)
 
@@ -1793,16 +1822,24 @@ def main() -> None:
 
     with st.sidebar:
         st.header("1. SKM List")
-        st.caption("Use the built-in SKM base, or upload a different SKM file if needed.")
+        st.caption("The built-in SKM base is used by default.")
         has_builtin_skm = BUILTIN_SKM_PATH.exists()
         use_builtin_skm = st.checkbox("Use built-in SKM base", value=has_builtin_skm, disabled=not has_builtin_skm)
-        skm_upload = st.file_uploader("Upload different SKM Excel/CSV", type=["xlsx", "xls", "csv", "tsv"])
+        skm_upload = None
 
         skm_df = None
         name_col = ""
         alias_cols: List[str] = []
-        threshold = st.slider("Match threshold", min_value=70, max_value=100, value=88, step=1)
-        review_margin = st.slider("Manual review range", min_value=0, max_value=20, value=8, step=1)
+        threshold = 88
+        review_margin = 0
+
+        with st.expander("Advanced SKM and matching settings"):
+            threshold = st.slider("Match threshold", min_value=70, max_value=100, value=88, step=1)
+            review_margin = st.slider("Manual review range", min_value=0, max_value=20, value=0, step=1)
+            if use_builtin_skm:
+                st.caption("Optional: turn off built-in SKM above to upload a different SKM file.")
+            else:
+                skm_upload = st.file_uploader("Upload different SKM Excel/CSV", type=["xlsx", "xls", "csv", "tsv"])
 
         if use_builtin_skm and has_builtin_skm:
             try:
