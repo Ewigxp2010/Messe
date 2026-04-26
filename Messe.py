@@ -2100,7 +2100,7 @@ def main() -> None:
             if not matched:
                 st.warning("No exhibitors were found. Try uploading page HTML or entering CSS selectors in Advanced settings.")
                 return
-
+ 
             result_df = pd.DataFrame(matched)
             st.session_state[result_state_key] = result_df
             st.session_state[warning_state_key] = scrape_warnings
