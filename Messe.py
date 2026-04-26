@@ -644,8 +644,16 @@ def parse_exhibitors_from_html(html: str, base_url: str = "", config: Optional[S
 
 def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
     LAST_SCRAPE_WARNINGS.clear()
+    site_specific_rows = _try_site_specific_exhibitor_fetch(config)
+    if site_specific_rows is not None:
+        rows = _dedupe_exhibitors(site_specific_rows)
+        if config.crawl_detail_pages:
+            rows = enrich_from_detail_pages(rows, config)
+        return rows
+
     urls = _build_page_urls(config)
     all_rows: List[Dict[str, Any]] = []
+    seen_page_fingerprints = set()
 
     for index, url in enumerate(urls):
         try:
@@ -674,6 +682,12 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
                 url = discovered_url
                 html = fetch_html_with_retry(url, config)
 
+        fingerprint = _page_fingerprint(html)
+        if fingerprint in seen_page_fingerprints:
+            LAST_SCRAPE_WARNINGS.append(f"Stopped at {url}: repeated page detected")
+            break
+        seen_page_fingerprints.add(fingerprint)
+
         page_rows = parse_exhibitors_from_html(html, base_url=url, config=config)
         all_rows.extend(page_rows)
 
@@ -690,6 +704,113 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
     if config.crawl_detail_pages:
         rows = enrich_from_detail_pages(rows, config)
     return rows
+
+
+def _try_site_specific_exhibitor_fetch(config: ScrapeConfig) -> Optional[List[Dict[str, Any]]]:
+    parsed = urlparse(config.url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+
+    if "interzoo.com" in host and "aussteller" in path:
+        try:
+            return _fetch_interzoo_algolia_exhibitors(config)
+        except Exception as exc:
+            LAST_SCRAPE_WARNINGS.append(f"Interzoo fast path failed, fell back to HTML scraping: {exc}")
+            return None
+
+    return None
+
+
+def _fetch_interzoo_algolia_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
+    app_id = "4EB6G0V1NT"
+    api_key = "f0416e3d1b38ae3aa789c8750e12bfe5"
+    index_name = "prod_website_companies_de-de"
+    search_url = f"https://{app_id}-dsn.algolia.net/1/indexes/{index_name}/query"
+    headers = {
+        "X-Algolia-API-Key": api_key,
+        "X-Algolia-Application-Id": app_id,
+        "Content-Type": "application/json",
+        "User-Agent": config.user_agent,
+    }
+
+    hits_per_page = 300
+    max_pages = max(1, config.max_pages)
+    rows: List[Dict[str, Any]] = []
+
+    for page in range(max_pages):
+        params = (
+            f"query=&hitsPerPage={hits_per_page}&page={page}"
+            "&filters=site:interz AND isExhibitor:Ja"
+        )
+        response = requests.post(search_url, headers=headers, json={"params": params}, timeout=config.timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+        hits = payload.get("hits") or []
+
+        for hit in hits:
+            rows.extend(_interzoo_rows_from_algolia_hit(hit, config.url))
+
+        nb_pages = int(payload.get("nbPages") or 0)
+        if page + 1 >= nb_pages:
+            break
+
+        if config.request_delay_seconds:
+            time.sleep(min(config.request_delay_seconds, 0.05))
+
+    LAST_SCRAPE_WARNINGS.append("Used Interzoo structured search API for faster scraping")
+    return rows
+
+
+def _interzoo_rows_from_algolia_hit(hit: Dict[str, Any], source_url: str) -> List[Dict[str, Any]]:
+    company_name = _clean_text(hit.get("companyName"))
+    country = _clean_text(hit.get("country"))
+    detail_url = _absolute_url(_clean_text(hit.get("url")), "https://www.interzoo.com")
+    website = _clean_text(hit.get("website"))
+    booths = hit.get("booth") or []
+    show_area = _clean_text(hit.get("productGroupName") or hit.get("mainProductGroup") or "")
+
+    if not booths:
+        row = _make_row(
+            name=company_name,
+            hall="",
+            booth="",
+            country=country,
+            website=website,
+            detail_url=detail_url,
+            source_url=source_url,
+            raw_text=company_name,
+            method="algolia_interzoo",
+        )
+        if show_area:
+            row["show_area"] = show_area
+        return [row] if _is_valid_exhibitor(row) else []
+
+    rows: List[Dict[str, Any]] = []
+    for booth_info in booths:
+        hall = _clean_text(booth_info.get("boothHall"))
+        booth = _clean_text(booth_info.get("boothNumber"))
+        row = _make_row(
+            name=company_name,
+            hall=hall,
+            booth=booth,
+            country=country,
+            website=website,
+            detail_url=detail_url,
+            source_url=source_url,
+            raw_text=f"{company_name} {hall} {booth} {country}",
+            method="algolia_interzoo",
+        )
+        if show_area:
+            row["show_area"] = show_area
+        if _is_valid_exhibitor(row):
+            rows.append(row)
+
+    return rows
+
+
+def _page_fingerprint(html: str) -> str:
+    normalized = re.sub(r"\s+", " ", html).strip()
+    return hashlib.sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _is_likely_exhibitor_directory_url(url: str) -> bool:
@@ -1435,7 +1556,7 @@ def extract_website_from_html(html: str, base_url: str) -> str:
 
 def _dedupe_exhibitors(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     best_by_key: Dict[str, Dict[str, Any]] = {}
-    method_rank = {"custom_selector": 5, "brand_card": 5, "json": 4, "table": 4, "card": 3, "link": 1}
+    method_rank = {"custom_selector": 5, "brand_card": 5, "algolia_interzoo": 5, "json": 4, "table": 4, "card": 3, "link": 1}
 
     for row in rows:
         name = normalize_company_name(row.get("exhibitor_name", ""))
