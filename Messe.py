@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-auto-strategy-engine-v12"
+APP_BUILD = "2026-04-27-homepage-discovery-fix-v13"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -757,7 +757,19 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
             if discovered_url and discovered_url not in urls:
                 urls[0] = discovered_url
                 url = discovered_url
+                config.url = discovered_url
                 html = fetch_html_with_retry(url, config)
+
+                discovered_site_rows = _try_site_specific_exhibitor_fetch(config)
+                if discovered_site_rows is not None:
+                    discovered_site_rows = _dedupe_exhibitors(discovered_site_rows)
+                    if _should_accept_scrape_result(discovered_site_rows, "", config, strategy_name="discovered site adapter"):
+                        if config.crawl_detail_pages:
+                            discovered_site_rows = enrich_from_detail_pages(discovered_site_rows, config)
+                        return discovered_site_rows
+                    LAST_SCRAPE_WARNINGS.append(
+                        "Discovered site adapter result looked incomplete; continued with fallback strategies"
+                    )
 
         if index == 0:
             first_page_html = html
@@ -1569,10 +1581,18 @@ def _discover_exhibitor_directory_url(html: str, base_url: str) -> str:
             score += 8
         if "exhibitor" in text or "aussteller" in text:
             score += 8
+        if "aussteller-finden" in path_query or "exhibitor-search" in path_query or "directory" in path_query:
+            score += 12
+        if "aussteller finden" in text or "find exhibitors" in text:
+            score += 12
+        if "aussteller-produkte" in path_query or "exhibitor products" in text:
+            score += 6
         if "explore all exhibitors" in text or "exhibitors 2025" in text:
             score += 8
         if parsed.path.rstrip("/").lower() == "/exhibitors":
             score += 6
+        if "/ausstellen" in path_query or "ausstellerbereich" in path_query or "shop=" in path_query:
+            score -= 12
         if parsed.path.lower().startswith("/de/") and not urlparse(base_url).path.lower().startswith("/de/"):
             score -= 4
         if any(bad in path_query for bad in ["application", "apply", "enquiry", "sponsor", "faq"]):
