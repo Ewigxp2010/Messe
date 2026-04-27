@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-executive-console-premium-v20"
+APP_BUILD = "2026-04-27-country-intelligence-v21"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2407,15 +2407,47 @@ def hall_summary(df: pd.DataFrame) -> pd.DataFrame:
     return grouped.sort_values(["skm_leads", "hall"], ascending=[False, True])
 
 
+def country_summary(df: pd.DataFrame, row_label: str = "lead_rows") -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["country", row_label, "unique_halls", "exhibitors"])
+
+    working = df.copy()
+    if "country" not in working.columns:
+        working["country"] = ""
+    if "hall" not in working.columns:
+        working["hall"] = ""
+    if "exhibitor_name" not in working.columns:
+        working["exhibitor_name"] = ""
+
+    working["country"] = working["country"].fillna("").astype(str).str.strip().replace("", "Unknown Country")
+    working["hall"] = working["hall"].fillna("").astype(str).str.strip()
+    grouped = (
+        working.groupby("country", dropna=False)
+        .agg(
+            **{
+                row_label: ("exhibitor_name", "count"),
+                "unique_halls": ("hall", lambda values: int(pd.Series([v for v in values if str(v).strip()]).nunique())),
+                "exhibitors": ("exhibitor_name", lambda values: ", ".join(sorted({str(v) for v in values if str(v).strip()}))),
+            }
+        )
+        .reset_index()
+    )
+    return grouped.sort_values([row_label, "country"], ascending=[False, True])
+
+
 def build_excel_download(all_df: pd.DataFrame) -> bytes:
     output = BytesIO()
     skm_df = sort_leads_by_hall(skm_leads(all_df))
     review_df = sort_leads_by_hall(review_leads(all_df))
     all_sorted = sort_leads_by_hall(all_df)
     summary_df = hall_summary(skm_df)
+    skm_country_df = country_summary(skm_df, row_label="skm_rows")
+    all_country_df = country_summary(all_sorted, row_label="lead_rows")
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         summary_df.to_excel(writer, sheet_name="SKM by Hall", index=False)
+        skm_country_df.to_excel(writer, sheet_name="SKM by Country", index=False)
+        all_country_df.to_excel(writer, sheet_name="All by Country", index=False)
         order_columns(skm_df).to_excel(writer, sheet_name="SKM Exhibitor Leads", index=False)
         if not review_df.empty:
             order_columns(review_df).to_excel(writer, sheet_name="Possible Matches", index=False)
@@ -2731,6 +2763,37 @@ def _render_hall_priority_strip(summary_df: pd.DataFrame) -> None:
     )
 
 
+def _render_country_priority_strip(summary_df: pd.DataFrame, row_label: str) -> None:
+    if summary_df.empty:
+        st.info("No country information found for the current fair run.")
+        return
+
+    top_countries = summary_df.head(6).to_dict(orient="records")
+    cards = []
+    for record in top_countries:
+        country = html.escape(str(record.get("country", "") or "Unknown Country"))
+        rows = int(record.get(row_label, 0) or 0)
+        halls = int(record.get("unique_halls", 0) or 0)
+        cards.append(
+            f"""
+            <div class="hall-priority-card">
+                <div class="hall-priority-hall">{country}</div>
+                <div class="hall-priority-value">{rows}</div>
+                <div class="hall-priority-caption">{halls} hall(s)</div>
+            </div>
+            """
+        )
+
+    st.markdown(
+        f"""
+        <div class="hall-priority-strip">
+            {''.join(cards)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
     if df.empty:
         st.info(empty_message)
@@ -2912,6 +2975,25 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header:
     _render_hall_drilldown(selected_hall, skm_df, all_df)
 
 
+def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> None:
+    _render_section_header("Country Intelligence", "Source Country Breakdown", "Classify exhibitors by source country so you can see where the fair supply base is concentrated.")
+    skm_country_df = country_summary(skm_df, row_label="skm_rows")
+    all_country_df = country_summary(all_df, row_label="lead_rows")
+    _render_country_priority_strip(skm_country_df if not skm_country_df.empty else all_country_df, "skm_rows" if not skm_country_df.empty else "lead_rows")
+
+    country_tabs = st.tabs(["SKM by Country", "All Leads by Country"])
+    with country_tabs[0]:
+        if skm_country_df.empty:
+            st.info("No SKM country data found for this fair.")
+        else:
+            st.dataframe(skm_country_df, use_container_width=True, hide_index=True)
+    with country_tabs[1]:
+        if all_country_df.empty:
+            st.info("No country data found for this fair.")
+        else:
+            st.dataframe(all_country_df, use_container_width=True, hide_index=True)
+
+
 def _render_results(result_df: pd.DataFrame) -> None:
     summary = summarize_matches(_safe_records(result_df))
     skm_df = sort_leads_by_hall(skm_leads(result_df))
@@ -2946,6 +3028,7 @@ def _render_results(result_df: pd.DataFrame) -> None:
 
     _render_section_header("Hall Intelligence", "SKM Hall Map", "Start with hall concentration, then move into the selected hall for booth-level execution.")
     _render_hall_map(skm_df, all_sorted, show_header=False)
+    _render_country_intelligence(skm_df, all_sorted)
 
     tabs = ["SKM Exhibitor Leads", "All Exhibitor Leads"]
     if not review_df.empty:
