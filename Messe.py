@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-executive-console-booth-cards-v18"
+APP_BUILD = "2026-04-27-executive-console-interaction-v19"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2702,6 +2702,35 @@ def _render_summary_ribbon(result_df: pd.DataFrame, skm_df: pd.DataFrame) -> Non
     )
 
 
+def _render_hall_priority_strip(summary_df: pd.DataFrame) -> None:
+    if summary_df.empty:
+        return
+
+    top_halls = summary_df.sort_values("skm_leads", ascending=False).head(6).to_dict(orient="records")
+    cards = []
+    for record in top_halls:
+        hall = html.escape(str(record.get("hall", "") or "Unknown Hall"))
+        leads = int(record.get("skm_leads", 0) or 0)
+        cards.append(
+            f"""
+            <div class="hall-priority-card">
+                <div class="hall-priority-hall">{hall}</div>
+                <div class="hall-priority-value">{leads}</div>
+                <div class="hall-priority-caption">SKM leads</div>
+            </div>
+            """
+        )
+
+    st.markdown(
+        f"""
+        <div class="hall-priority-strip">
+            {''.join(cards)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
     if df.empty:
         st.info(empty_message)
@@ -2709,10 +2738,12 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
 
     records = _booth_sort_frame(df).to_dict(orient="records")
     rows_to_show = min(len(records), 80)
+    card_number = 0
     for start in range(0, rows_to_show, 2):
         cols = st.columns(2)
         for idx, record in enumerate(records[start:start + 2]):
             with cols[idx]:
+                card_number += 1
                 booth = str(record.get("booth", "") or "").strip()
                 hall = str(record.get("hall", "") or "").strip() or "Unknown Hall"
                 country = str(record.get("country", "") or "").strip() or "Unknown Country"
@@ -2727,6 +2758,8 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
                 meta_chips = [f'<span class="booth-card-meta-chip">{html.escape(country)}</span>']
                 if booth:
                     meta_chips.append(f'<span class="booth-card-meta-chip">Booth {html.escape(booth)}</span>')
+                else:
+                    meta_chips.append('<span class="booth-card-meta-chip muted">Booth pending</span>')
                 if show_area:
                     meta_chips.append(f'<span class="booth-card-meta-chip">{html.escape(show_area)}</span>')
 
@@ -2741,7 +2774,10 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
                     f"""
                     <div class="booth-card">
                         <div class="booth-card-top">
-                            <span class="booth-card-badge {safe_badge_class}">{html.escape(badge)}</span>
+                            <div class="booth-card-top-left">
+                                <span class="booth-card-badge {safe_badge_class}">{html.escape(badge)}</span>
+                                <span class="booth-card-index">{card_number:02d}</span>
+                            </div>
                             <div class="booth-card-location">{html.escape(location)}</div>
                         </div>
                         <div class="booth-card-name">{html.escape(exhibitor_name)}</div>
@@ -2858,8 +2894,9 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header:
     )
     chart_height = max(240, int((summary_df["map_row"].max() + 1) * 95))
     st.altair_chart((heatmap + labels).properties(height=chart_height), use_container_width=True)
+    _render_hall_priority_strip(summary_df)
 
-    selected_hall = st.selectbox("Select a hall to view detailed lead distribution", halls)
+    selected_hall = st.selectbox("Choose a hall to open the detailed operating view", halls)
     _render_hall_drilldown(selected_hall, skm_df, all_df)
 
 
@@ -3287,6 +3324,38 @@ def _inject_app_css() -> None:
             color: #a44733;
             border-color: rgba(164, 71, 51, 0.10);
         }
+        .hall-priority-strip {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 10px;
+            margin: 12px 0 14px 0;
+        }
+        .hall-priority-card {
+            background: rgba(255, 255, 255, 0.98);
+            border: 1px solid rgba(25, 28, 38, 0.055);
+            border-radius: 14px;
+            padding: 12px 12px 10px;
+            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.03);
+        }
+        .hall-priority-hall {
+            color: #1f2330;
+            font-size: 0.88rem;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 10px;
+        }
+        .hall-priority-value {
+            color: #1f2330;
+            font-size: 1.25rem;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 5px;
+        }
+        .hall-priority-caption {
+            color: #667085;
+            font-size: 0.78rem;
+            line-height: 1.2;
+        }
         .booth-card {
             background: rgba(255, 255, 255, 0.985);
             border: 1px solid rgba(25, 28, 38, 0.06);
@@ -3301,6 +3370,11 @@ def _inject_app_css() -> None:
             justify-content: space-between;
             gap: 10px;
             margin-bottom: 12px;
+        }
+        .booth-card-top-left {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
         }
         .booth-card-badge {
             display: inline-flex;
@@ -3317,6 +3391,12 @@ def _inject_app_css() -> None:
         .booth-card-badge.lead {
             background: rgba(17, 24, 39, 0.055);
             color: #4b5563;
+        }
+        .booth-card-index {
+            color: #98a2b3;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
         }
         .booth-card-location {
             color: #667085;
@@ -3347,6 +3427,10 @@ def _inject_app_css() -> None:
             color: #566072;
             font-size: 0.8rem;
             line-height: 1;
+        }
+        .booth-card-meta-chip.muted {
+            background: rgba(17, 24, 39, 0.04);
+            color: #667085;
         }
         .booth-card-links {
             display: flex;
@@ -3425,6 +3509,9 @@ def _inject_app_css() -> None:
             }
             .summary-ribbon {
                 grid-template-columns: 1fr;
+            }
+            .hall-priority-strip {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
             .radar-hero {
                 padding: 22px 18px;
