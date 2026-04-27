@@ -26,7 +26,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-onboarding-ui-v5"
+APP_BUILD = "2026-04-27-booth-board-v6"
 
 # =========================
 # SKM matching
@@ -1910,6 +1910,19 @@ def _booth_coverage(df: pd.DataFrame) -> int:
     return int(df["booth"].fillna("").astype(str).str.strip().ne("").sum())
 
 
+def _booth_sort_frame(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    working = df.copy()
+    booth_values = working["booth"].fillna("").astype(str).str.strip() if "booth" in working.columns else pd.Series("", index=working.index)
+    working["_has_booth"] = booth_values.ne("")
+    working["_booth_sort"] = booth_values
+    sort_cols = [col for col in ["_has_booth", "hall", "_booth_sort", "exhibitor_name"] if col in working.columns]
+    ascending = [False, True, True, True][: len(sort_cols)]
+    working = working.sort_values(sort_cols, ascending=ascending, kind="stable")
+    return working.drop(columns=[col for col in ["_has_booth", "_booth_sort"] if col in working.columns])
+
+
 def _render_hall_snapshot_card(title: str, value: int, caption: str) -> None:
     st.markdown(
         f"""
@@ -1923,9 +1936,58 @@ def _render_hall_snapshot_card(title: str, value: int, caption: str) -> None:
     )
 
 
+def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
+    if df.empty:
+        st.info(empty_message)
+        return
+
+    records = _booth_sort_frame(df).to_dict(orient="records")
+    rows_to_show = min(len(records), 120)
+    for start in range(0, rows_to_show, 3):
+        cols = st.columns(3)
+        for idx, record in enumerate(records[start:start + 3]):
+            with cols[idx]:
+                booth = str(record.get("booth", "") or "").strip()
+                hall = str(record.get("hall", "") or "").strip() or "Unknown Hall"
+                country = str(record.get("country", "") or "").strip() or "Unknown Country"
+                website = str(record.get("website", "") or "").strip()
+                detail_url = str(record.get("detail_url", "") or "").strip()
+                show_area = str(record.get("show_area", "") or "").strip()
+                match_status = str(record.get("match_status", "") or "").strip()
+                badge = "SKM" if match_status == "SKM Match" else "Lead"
+                location = f"{hall} / {booth}" if booth else hall
+
+                links = []
+                if detail_url:
+                    links.append(f'<a href="{detail_url}" target="_blank">Detail</a>')
+                if website:
+                    links.append(f'<a href="{website}" target="_blank">Website</a>')
+                links_html = " · ".join(links) if links else "No external link"
+                area_html = f'<div class="booth-card-meta">Area: {show_area}</div>' if show_area else ""
+
+                st.markdown(
+                    f"""
+                    <div class="booth-card">
+                        <div class="booth-card-top">
+                            <span class="booth-card-badge">{badge}</span>
+                            <span class="booth-card-location">{location}</span>
+                        </div>
+                        <div class="booth-card-title">{record.get("exhibitor_name", "")}</div>
+                        <div class="booth-card-meta">{country}</div>
+                        {area_html}
+                        <div class="booth-card-links">{links_html}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    if len(records) > rows_to_show:
+        st.caption(f"Showing the first {rows_to_show} leads in card view. Use the table tabs for the full hall list.")
+
+
 def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataFrame) -> None:
-    hall_skm = sort_leads_by_hall(_hall_filtered_rows(skm_rows, hall))
-    hall_all = sort_leads_by_hall(_hall_filtered_rows(all_rows, hall))
+    hall_skm = _booth_sort_frame(_hall_filtered_rows(skm_rows, hall))
+    hall_all = _booth_sort_frame(_hall_filtered_rows(all_rows, hall))
     skm_booth_count = _booth_coverage(hall_skm)
     all_booth_count = _booth_coverage(hall_all)
     countries = []
@@ -1946,13 +2008,17 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
     if countries:
         st.caption("Countries in this hall: " + ", ".join(countries[:18]) + (" ..." if len(countries) > 18 else ""))
 
-    hall_tabs = st.tabs(["SKM in Hall", "All Leads in Hall"])
+    hall_tabs = st.tabs(["SKM Booth Board", "All Leads Booth Board", "SKM Table", "All Leads Table"])
     with hall_tabs[0]:
+        _render_lead_cards(hall_skm, "No SKM leads found in this hall.")
+    with hall_tabs[1]:
+        _render_lead_cards(hall_all, "No exhibitor leads found in this hall.")
+    with hall_tabs[2]:
         if hall_skm.empty:
             st.info("No SKM leads found in this hall.")
         else:
             st.dataframe(order_columns(hall_skm), use_container_width=True, hide_index=True)
-    with hall_tabs[1]:
+    with hall_tabs[3]:
         if hall_all.empty:
             st.info("No exhibitor leads found in this hall.")
         else:
@@ -2158,6 +2224,68 @@ def _inject_app_css() -> None:
             color: #5a6170;
             font-size: 0.85rem;
             line-height: 1.35;
+        }
+        .booth-card {
+            background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(255,248,244,0.98) 100%);
+            border: 1px solid rgba(31, 35, 48, 0.08);
+            border-radius: 14px;
+            padding: 14px 15px 13px;
+            min-height: 146px;
+            box-shadow: 0 10px 26px rgba(39, 19, 8, 0.05);
+            margin-bottom: 12px;
+        }
+        .booth-card-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .booth-card-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 46px;
+            height: 24px;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: rgba(242, 99, 71, 0.12);
+            color: #c54b32;
+            font-size: 0.78rem;
+            font-weight: 700;
+        }
+        .booth-card-location {
+            color: #4d5565;
+            font-size: 0.82rem;
+            font-weight: 600;
+            text-align: right;
+        }
+        .booth-card-title {
+            color: #1f2330;
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1.35;
+            margin-bottom: 8px;
+        }
+        .booth-card-meta {
+            color: #5a6170;
+            font-size: 0.87rem;
+            line-height: 1.4;
+            margin-bottom: 6px;
+        }
+        .booth-card-links {
+            color: #c54b32;
+            font-size: 0.84rem;
+            line-height: 1.4;
+            margin-top: 10px;
+        }
+        .booth-card-links a {
+            color: #c54b32;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .booth-card-links a:hover {
+            text-decoration: underline;
         }
         @media (max-width: 900px) {
             .radar-grid {
