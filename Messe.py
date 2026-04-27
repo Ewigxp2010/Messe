@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-homepage-discovery-fix-v13"
+APP_BUILD = "2026-04-27-premium-console-ui-v14"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2861,19 +2861,32 @@ def _inject_app_css() -> None:
         <style>
         .stApp {
             background:
-                radial-gradient(circle at top right, rgba(245, 94, 66, 0.045), transparent 24%),
-                linear-gradient(180deg, #fcfcfd 0%, #ffffff 26%, #ffffff 100%);
+                radial-gradient(circle at top right, rgba(245, 94, 66, 0.040), transparent 22%),
+                radial-gradient(circle at top left, rgba(17, 24, 39, 0.018), transparent 16%),
+                linear-gradient(180deg, #fafbfd 0%, #ffffff 22%, #ffffff 100%);
         }
         .block-container {
-            padding-top: 1.35rem;
+            padding-top: 1.2rem;
             max-width: 1280px;
+        }
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #f7f8fb 0%, #f2f4f7 100%);
+            border-right: 1px solid rgba(25, 28, 38, 0.055);
+        }
+        section[data-testid="stSidebar"] .block-container {
+            padding-top: 1.05rem;
+        }
+        section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] .stCaption {
+            color: #596274;
         }
         div[data-testid="stMetric"] {
             background: rgba(255, 255, 255, 0.96);
             border: 1px solid rgba(25, 28, 38, 0.065);
-            border-radius: 12px;
+            border-radius: 14px;
             padding: 16px 16px 14px;
-            box-shadow: 0 10px 26px rgba(15, 23, 42, 0.035);
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.035);
         }
         div[data-testid="stMetric"] label {
             color: #6b7280 !important;
@@ -2887,21 +2900,41 @@ def _inject_app_css() -> None:
         button[kind="secondary"], button[kind="primary"] {
             border-radius: 12px !important;
         }
+        div[data-testid="stFileUploader"] {
+            background: rgba(255,255,255,0.84);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 16px;
+            padding: 8px;
+        }
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"] > div,
+        div[data-testid="stNumberInputContainer"] > div {
+            border-radius: 12px !important;
+        }
         div[data-baseweb="tab-list"] {
             gap: 6px;
+            padding: 4px;
+            background: rgba(247, 248, 250, 0.96);
+            border: 1px solid rgba(25, 28, 38, 0.05);
+            border-radius: 12px;
         }
         button[role="tab"] {
-            border-radius: 10px !important;
+            border-radius: 9px !important;
             padding: 8px 12px !important;
+            transition: all 0.18s ease;
+        }
+        button[role="tab"][aria-selected="true"] {
+            background: #ffffff !important;
+            box-shadow: 0 3px 10px rgba(15, 23, 42, 0.06);
         }
         .radar-hero {
             background:
-                linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(255,248,244,0.96) 100%);
-            border: 1px solid rgba(25, 28, 38, 0.06);
-            border-radius: 18px;
-            padding: 26px 28px 22px;
-            box-shadow: 0 14px 34px rgba(15, 23, 42, 0.045);
-            margin-bottom: 18px;
+                linear-gradient(135deg, rgba(255,255,255,0.985) 0%, rgba(255,248,244,0.97) 55%, rgba(252,245,242,0.96) 100%);
+            border: 1px solid rgba(25, 28, 38, 0.055);
+            border-radius: 22px;
+            padding: 28px 30px 24px;
+            box-shadow: 0 18px 44px rgba(15, 23, 42, 0.05);
+            margin-bottom: 20px;
             position: relative;
             overflow: hidden;
         }
@@ -2909,9 +2942,18 @@ def _inject_app_css() -> None:
             content: "";
             position: absolute;
             inset: auto -12% -42% auto;
-            width: 320px;
-            height: 320px;
-            background: radial-gradient(circle, rgba(245, 94, 66, 0.08) 0%, rgba(245, 94, 66, 0.0) 70%);
+            width: 360px;
+            height: 360px;
+            background: radial-gradient(circle, rgba(245, 94, 66, 0.09) 0%, rgba(245, 94, 66, 0.0) 72%);
+            pointer-events: none;
+        }
+        .radar-hero::before {
+            content: "";
+            position: absolute;
+            inset: -10% auto auto -6%;
+            width: 220px;
+            height: 220px;
+            background: radial-gradient(circle, rgba(17, 24, 39, 0.035) 0%, rgba(17, 24, 39, 0) 72%);
             pointer-events: none;
         }
         .radar-eyebrow {
@@ -2945,6 +2987,31 @@ def _inject_app_css() -> None:
             position: relative;
             z-index: 1;
         }
+        .radar-status-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 14px 0 2px 0;
+            position: relative;
+            z-index: 1;
+        }
+        .radar-status-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 11px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.80);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            color: #475063;
+            font-size: 0.84rem;
+            line-height: 1;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.72);
+        }
+        .radar-status-chip strong {
+            color: #111827;
+            font-weight: 700;
+        }
         .radar-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2959,7 +3026,7 @@ def _inject_app_css() -> None:
             border-radius: 14px;
             padding: 15px 15px 13px;
             min-height: 126px;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 8px 18px rgba(15,23,42,0.025);
             backdrop-filter: blur(4px);
         }
         .radar-card h3 {
@@ -2997,7 +3064,7 @@ def _inject_app_css() -> None:
             color: #252833;
         }
         .section-header {
-            margin: 14px 0 10px 0;
+            margin: 16px 0 10px 0;
         }
         .section-eyebrow {
             color: #7b818f;
@@ -3021,11 +3088,11 @@ def _inject_app_css() -> None:
         }
         .dashboard-note {
             background: rgba(255, 255, 255, 0.96);
-            border: 1px solid rgba(31, 35, 48, 0.07);
-            border-radius: 14px;
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 16px;
             padding: 16px 16px 14px;
             min-height: 104px;
-            box-shadow: 0 8px 20px rgba(39, 19, 8, 0.03);
+            box-shadow: 0 12px 26px rgba(15, 23, 42, 0.035);
         }
         .dashboard-note-title {
             color: #1f2330;
@@ -3040,11 +3107,11 @@ def _inject_app_css() -> None:
         }
         .hall-stat-card {
             background: rgba(255, 255, 255, 0.94);
-            border: 1px solid rgba(31, 35, 48, 0.08);
-            border-radius: 12px;
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 14px;
             padding: 13px 14px 11px;
             min-height: 90px;
-            box-shadow: 0 8px 18px rgba(39, 19, 8, 0.03);
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.032);
             margin-bottom: 10px;
         }
         .hall-stat-title {
@@ -3065,12 +3132,18 @@ def _inject_app_css() -> None:
             font-size: 0.85rem;
             line-height: 1.35;
         }
+        div[data-testid="stDataFrame"] {
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.03);
+        }
         @media (max-width: 900px) {
             .radar-grid {
                 grid-template-columns: 1fr;
             }
             .radar-hero {
-                padding: 20px 16px;
+                padding: 22px 18px;
             }
             .radar-hero h1 {
                 font-size: 1.72rem;
@@ -3097,6 +3170,11 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
                 Track priority merchants across trade fairs, locate them by hall and booth,
                 and export a clean operating list for on-site outreach. {built_in_copy}
             </p>
+            <div class="radar-status-row">
+                <div class="radar-status-chip"><strong>SKM Base</strong> Built in</div>
+                <div class="radar-status-chip"><strong>Mode</strong> Fair intelligence</div>
+                <div class="radar-status-chip"><strong>Output</strong> Hall and booth leads</div>
+            </div>
             <div class="radar-grid">
                 <div class="radar-card">
                     <h3>Directory Input</h3>
