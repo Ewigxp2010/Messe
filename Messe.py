@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-executive-console-layout-v16"
+APP_BUILD = "2026-04-27-executive-console-drilldown-v17"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2759,7 +2759,17 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
     if not hall_all.empty and "country" in hall_all.columns:
         countries = sorted({str(v) for v in hall_all["country"].fillna("") if str(v).strip()})
 
-    st.markdown(f"### {hall}")
+    coverage_note = f"{len(hall_skm)} priority merchant row(s) and {len(hall_all)} total lead row(s) are currently mapped into this hall."
+    st.markdown(
+        f"""
+        <div class="hall-drilldown-shell">
+            <div class="hall-drilldown-topline">Selected Hall</div>
+            <div class="hall-drilldown-title">{hall}</div>
+            <div class="hall-drilldown-subtitle">{coverage_note}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     stat_cols = st.columns(4)
     with stat_cols[0]:
         _render_hall_snapshot_card("SKM Leads", len(hall_skm), "Priority merchants in this hall")
@@ -2771,19 +2781,26 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         _render_hall_snapshot_card("All with Booth", all_booth_count, "All leads with booth positions")
 
     if countries:
-        st.caption("Countries in this hall: " + ", ".join(countries[:18]) + (" ..." if len(countries) > 18 else ""))
+        country_chips = "".join([f'<span class="country-chip">{country}</span>' for country in countries[:10]])
+        if len(countries) > 10:
+            country_chips += f'<span class="country-chip country-chip-more">+{len(countries) - 10} more</span>'
+        st.markdown(f'<div class="country-chip-row">{country_chips}</div>', unsafe_allow_html=True)
 
     hall_tabs = st.tabs(["SKM Booth Board", "All Leads Booth Board", "SKM Table", "All Leads Table"])
     with hall_tabs[0]:
+        _render_section_header("Execution View", "SKM Booth Board", "The priority merchant board for in-hall follow-up.")
         _render_lead_cards(hall_skm, "No SKM leads found in this hall.")
     with hall_tabs[1]:
+        _render_section_header("Coverage View", "All Leads Booth Board", "The broader hall roster when you want additional sourcing coverage around SKM targets.")
         _render_lead_cards(hall_all, "No exhibitor leads found in this hall.")
     with hall_tabs[2]:
+        _render_section_header("Structured View", "SKM Table", "Sortable SKM detail for export checks and manual review.")
         if hall_skm.empty:
             st.info("No SKM leads found in this hall.")
         else:
             st.dataframe(order_columns(hall_skm), use_container_width=True, hide_index=True)
     with hall_tabs[3]:
+        _render_section_header("Structured View", "All Leads Table", "The complete hall table for filtering, handoff, and downstream operating work.")
         if hall_all.empty:
             st.info("No exhibitor leads found in this hall.")
         else:
@@ -3209,6 +3226,58 @@ def _inject_app_css() -> None:
             color: #667085;
             font-size: 0.84rem;
             line-height: 1.4;
+        }
+        .hall-drilldown-shell {
+            margin-top: 12px;
+            padding: 16px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.98);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            box-shadow: 0 16px 34px rgba(15, 23, 42, 0.04);
+        }
+        .hall-drilldown-topline {
+            color: #7b818f;
+            font-size: 0.76rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 6px;
+        }
+        .hall-drilldown-title {
+            color: #1f2330;
+            font-size: 1.6rem;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 8px;
+        }
+        .hall-drilldown-subtitle {
+            color: #5d6575;
+            font-size: 0.92rem;
+            line-height: 1.45;
+            margin-bottom: 12px;
+            max-width: 860px;
+        }
+        .country-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 4px 0 6px 0;
+        }
+        .country-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: #f7f8fb;
+            border: 1px solid rgba(25, 28, 38, 0.055);
+            color: #566072;
+            font-size: 0.82rem;
+            line-height: 1;
+        }
+        .country-chip-more {
+            background: rgba(245, 94, 66, 0.06);
+            color: #a44733;
+            border-color: rgba(164, 71, 51, 0.10);
         }
         .build-chip {
             display: inline-flex;
