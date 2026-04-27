@@ -25,6 +25,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
+APP_BUILD = "2026-04-26-interzoo-fastpath-v3"
 
 # =========================
 # SKM matching
@@ -586,6 +587,7 @@ def fetch_html_with_retry(url: str, config: Optional[ScrapeConfig] = None, retri
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_fetch_html(
+    scraper_build: str,
     url: str,
     max_pages: int,
     page_url_template: str,
@@ -600,6 +602,7 @@ def cached_fetch_html(
     auto_discover_exhibitor_directory: bool,
     detail_page_limit: int,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
+    _ = scraper_build
     config = ScrapeConfig(
         url=url,
         max_pages=max_pages,
@@ -1940,6 +1943,7 @@ def main() -> None:
         "Upload your Strategic Key Merchant list, enter an exhibitor directory URL, "
         "and identify priority merchants with hall and booth information."
     )
+    st.caption(f"Build: {APP_BUILD}")
 
     with st.sidebar:
         st.header("1. SKM List")
@@ -2068,6 +2072,7 @@ def main() -> None:
                     scrape_warnings = []
                 else:
                     exhibitors, scrape_warnings = cached_fetch_html(
+                        scraper_build=APP_BUILD,
                         url=url,
                         max_pages=int(max_pages),
                         page_url_template=page_url_template.strip(),
@@ -2100,7 +2105,7 @@ def main() -> None:
             if not matched:
                 st.warning("No exhibitors were found. Try uploading page HTML or entering CSS selectors in Advanced settings.")
                 return
- 
+
             result_df = pd.DataFrame(matched)
             st.session_state[result_state_key] = result_df
             st.session_state[warning_state_key] = scrape_warnings
