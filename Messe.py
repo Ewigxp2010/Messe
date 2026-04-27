@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-executive-console-v15"
+APP_BUILD = "2026-04-27-executive-console-layout-v16"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2665,6 +2665,43 @@ def _render_section_header(eyebrow: str, title: str, description: str = "") -> N
     )
 
 
+def _render_summary_ribbon(result_df: pd.DataFrame, skm_df: pd.DataFrame) -> None:
+    total_rows = len(result_df)
+    unique_halls = 0
+    booth_rows = 0
+    skm_share = 0.0
+
+    if total_rows:
+        if "hall" in result_df.columns:
+            unique_halls = int(result_df["hall"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+        if "booth" in result_df.columns:
+            booth_rows = int(result_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
+        skm_share = (len(skm_df) / total_rows) * 100
+
+    st.markdown(
+        f"""
+        <div class="summary-ribbon">
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Hall Coverage</div>
+                <div class="summary-ribbon-value">{unique_halls}</div>
+                <div class="summary-ribbon-caption">Unique halls detected across the captured fair directory.</div>
+            </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Booth Visibility</div>
+                <div class="summary-ribbon-value">{booth_rows}</div>
+                <div class="summary-ribbon-caption">Lead rows already resolved down to booth-level operating detail.</div>
+            </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">SKM Density</div>
+                <div class="summary-ribbon-value">{skm_share:.1f}%</div>
+                <div class="summary-ribbon-caption">Share of captured lead rows currently mapped to priority merchants.</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
     if df.empty:
         st.info(empty_message)
@@ -2753,8 +2790,9 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
             st.dataframe(order_columns(hall_all), use_container_width=True, hide_index=True)
 
 
-def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> None:
-    _render_section_header("Hall Intelligence", "SKM Hall Heatmap", "See where SKM density is concentrated, then drill into one hall at a time.")
+def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header: bool = True) -> None:
+    if show_header:
+        _render_section_header("Hall Intelligence", "SKM Hall Heatmap", "See where SKM density is concentrated, then drill into one hall at a time.")
     if skm_df.empty:
         st.info("No SKM exhibitor leads found yet.")
         return
@@ -2802,11 +2840,16 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> None:
 
 def _render_results(result_df: pd.DataFrame) -> None:
     summary = summarize_matches(_safe_records(result_df))
+    skm_df = sort_leads_by_hall(skm_leads(result_df))
+    review_df = sort_leads_by_hall(review_leads(result_df))
+    all_sorted = sort_leads_by_hall(result_df)
+
     _render_section_header("Overview", "Fair Command Summary", "A concise operating view of fair coverage, priority merchants, and export-ready output.")
     metric_cols = st.columns(3)
     metric_cols[0].metric("Total Exhibitors", summary["total"])
     metric_cols[1].metric("SKM Exhibitor Leads", summary["skm_matches"])
     metric_cols[2].metric("Needs Review", summary["review"])
+    _render_summary_ribbon(all_sorted, skm_df)
 
     action_left, action_right = st.columns([1.2, 1])
     with action_left:
@@ -2827,19 +2870,16 @@ def _render_results(result_df: pd.DataFrame) -> None:
             unsafe_allow_html=True,
         )
 
-    skm_df = sort_leads_by_hall(skm_leads(result_df))
-    review_df = sort_leads_by_hall(review_leads(result_df))
-    all_sorted = sort_leads_by_hall(result_df)
+    _render_section_header("Hall Intelligence", "SKM Hall Map", "Start with hall concentration, then move into the selected hall for booth-level execution.")
+    _render_hall_map(skm_df, all_sorted, show_header=False)
 
-    tabs = ["Hall Map", "SKM Exhibitor Leads", "All Exhibitor Leads"]
+    tabs = ["SKM Exhibitor Leads", "All Exhibitor Leads"]
     if not review_df.empty:
-        tabs.insert(2, "Possible Matches")
+        tabs.insert(1, "Possible Matches")
+    _render_section_header("Lead Tables", "Lead Sheets", "Use the structured tables when you need full-list review, filtering, or export checks.")
     rendered_tabs = st.tabs(tabs)
-    tab_map = rendered_tabs[0]
-    tab_skm = rendered_tabs[1]
+    tab_skm = rendered_tabs[0]
     tab_all = rendered_tabs[-1]
-    with tab_map:
-        _render_hall_map(skm_df, all_sorted)
     with tab_skm:
         _render_section_header("Priority Leads", "SKM Exhibitor Leads", "High-confidence SKM merchants, ready for booth-level follow-up.")
         st.dataframe(
@@ -2848,7 +2888,7 @@ def _render_results(result_df: pd.DataFrame) -> None:
             hide_index=True,
         )
     if not review_df.empty:
-        with rendered_tabs[2]:
+        with rendered_tabs[1]:
             _render_section_header("Review Queue", "Possible Matches", "Lower-confidence matches separated from the main SKM operating list.")
             st.caption("These are lower-confidence fuzzy matches. Use them only as a backup review list.")
             st.dataframe(order_columns(review_df), use_container_width=True, hide_index=True)
@@ -3107,6 +3147,39 @@ def _inject_app_css() -> None:
             font-size: 0.9rem;
             line-height: 1.45;
         }
+        .summary-ribbon {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin: 10px 0 6px 0;
+        }
+        .summary-ribbon-card {
+            background: rgba(255, 255, 255, 0.98);
+            border: 1px solid rgba(25, 28, 38, 0.055);
+            border-radius: 16px;
+            padding: 14px 15px 12px;
+            box-shadow: 0 12px 26px rgba(15, 23, 42, 0.03);
+        }
+        .summary-ribbon-title {
+            color: #6b7280;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 8px;
+        }
+        .summary-ribbon-value {
+            color: #1f2330;
+            font-size: 1.35rem;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 6px;
+        }
+        .summary-ribbon-caption {
+            color: #5d6575;
+            font-size: 0.86rem;
+            line-height: 1.35;
+        }
         .summary-actions {
             margin: 10px 0 6px 0;
         }
@@ -3186,6 +3259,9 @@ def _inject_app_css() -> None:
         }
         @media (max-width: 900px) {
             .radar-grid {
+                grid-template-columns: 1fr;
+            }
+            .summary-ribbon {
                 grid-template-columns: 1fr;
             }
             .radar-hero {
