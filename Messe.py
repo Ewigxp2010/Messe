@@ -2440,7 +2440,7 @@ def _autosize_workbook(sheets: Dict[str, object]) -> None:
 # =========================
 
 st.set_page_config(
-    page_title="TikTok Shop SKM Exhibition Radar",
+    page_title="TikTok Shop Fair Intel Console",
     page_icon="TS",
     layout="wide",
 )
@@ -2861,19 +2861,19 @@ def _inject_app_css() -> None:
         <style>
         .stApp {
             background:
-                radial-gradient(circle at top right, rgba(255, 99, 71, 0.06), transparent 24%),
-                linear-gradient(180deg, #fffdfc 0%, #ffffff 24%, #ffffff 100%);
+                radial-gradient(circle at top right, rgba(245, 94, 66, 0.045), transparent 24%),
+                linear-gradient(180deg, #fcfcfd 0%, #ffffff 26%, #ffffff 100%);
         }
         .block-container {
-            padding-top: 1.6rem;
-            max-width: 1240px;
+            padding-top: 1.35rem;
+            max-width: 1280px;
         }
         div[data-testid="stMetric"] {
             background: rgba(255, 255, 255, 0.96);
-            border: 1px solid rgba(31, 35, 48, 0.07);
-            border-radius: 14px;
+            border: 1px solid rgba(25, 28, 38, 0.065);
+            border-radius: 12px;
             padding: 16px 16px 14px;
-            box-shadow: 0 8px 22px rgba(39, 19, 8, 0.03);
+            box-shadow: 0 10px 26px rgba(15, 23, 42, 0.035);
         }
         div[data-testid="stMetric"] label {
             color: #6b7280 !important;
@@ -2895,12 +2895,24 @@ def _inject_app_css() -> None:
             padding: 8px 12px !important;
         }
         .radar-hero {
-            background: linear-gradient(135deg, #ffffff 0%, #fffaf8 62%, #fff4ef 100%);
-            border: 1px solid rgba(31, 35, 48, 0.06);
-            border-radius: 16px;
-            padding: 24px 26px;
-            box-shadow: 0 10px 24px rgba(39, 19, 8, 0.035);
-            margin-bottom: 16px;
+            background:
+                linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(255,248,244,0.96) 100%);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 18px;
+            padding: 26px 28px 22px;
+            box-shadow: 0 14px 34px rgba(15, 23, 42, 0.045);
+            margin-bottom: 18px;
+            position: relative;
+            overflow: hidden;
+        }
+        .radar-hero::after {
+            content: "";
+            position: absolute;
+            inset: auto -12% -42% auto;
+            width: 320px;
+            height: 320px;
+            background: radial-gradient(circle, rgba(245, 94, 66, 0.08) 0%, rgba(245, 94, 66, 0.0) 70%);
+            pointer-events: none;
         }
         .radar-eyebrow {
             display: inline-block;
@@ -2908,42 +2920,52 @@ def _inject_app_css() -> None:
             font-weight: 700;
             letter-spacing: 0.04em;
             text-transform: uppercase;
-            color: #a74a38;
-            background: rgba(167, 74, 56, 0.08);
+            color: #a44733;
+            background: rgba(164, 71, 51, 0.085);
             border-radius: 999px;
-            padding: 5px 9px;
-            margin-bottom: 12px;
+            padding: 5px 10px;
+            margin-bottom: 14px;
+            position: relative;
+            z-index: 1;
         }
         .radar-hero h1 {
             margin: 0 0 8px 0;
-            color: #1f2330;
-            font-size: 2.05rem;
-            line-height: 1.08;
+            color: #171a23;
+            font-size: 2.15rem;
+            line-height: 1.04;
+            position: relative;
+            z-index: 1;
         }
         .radar-hero p {
             margin: 0;
-            max-width: 780px;
-            color: #4d5565;
+            max-width: 820px;
+            color: #4e5667;
             font-size: 0.98rem;
-            line-height: 1.5;
+            line-height: 1.52;
+            position: relative;
+            z-index: 1;
         }
         .radar-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 12px;
-            margin: 14px 0 8px 0;
+            gap: 14px;
+            margin: 16px 0 10px 0;
+            position: relative;
+            z-index: 1;
         }
         .radar-card {
-            background: rgba(255, 255, 255, 0.90);
-            border: 1px solid rgba(31, 35, 48, 0.06);
-            border-radius: 12px;
-            padding: 14px 14px 12px;
-            min-height: 118px;
+            background: rgba(255, 255, 255, 0.88);
+            border: 1px solid rgba(25, 28, 38, 0.055);
+            border-radius: 14px;
+            padding: 15px 15px 13px;
+            min-height: 126px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+            backdrop-filter: blur(4px);
         }
         .radar-card h3 {
-            margin: 0 0 8px 0;
+            margin: 0 0 9px 0;
             font-size: 0.96rem;
-            color: #252833;
+            color: #1f2330;
         }
         .radar-card p,
         .radar-card li {
@@ -2961,13 +2983,15 @@ def _inject_app_css() -> None:
         }
         .radar-note {
             margin-top: 8px;
-            padding: 11px 13px;
+            padding: 12px 14px;
             border-radius: 12px;
-            background: rgba(255, 255, 255, 0.94);
-            border: 1px solid rgba(31, 35, 48, 0.07);
+            background: rgba(255, 255, 255, 0.93);
+            border: 1px solid rgba(25, 28, 38, 0.06);
             color: #4d5565;
             font-size: 0.9rem;
             line-height: 1.45;
+            position: relative;
+            z-index: 1;
         }
         .radar-note strong {
             color: #252833;
@@ -3067,15 +3091,15 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
     st.markdown(
         f"""
         <section class="radar-hero">
-            <div class="radar-eyebrow">Product Guide</div>
-            <h1>TikTok Shop SKM Exhibition Radar</h1>
+            <div class="radar-eyebrow">Operations Brief</div>
+            <h1>TikTok Shop Fair Intel Console</h1>
             <p>
-                Find which strategic merchants are attending a fair, where they sit by hall and booth,
-                and export a clean lead sheet for field招商. {built_in_copy}
+                Track priority merchants across trade fairs, locate them by hall and booth,
+                and export a clean operating list for on-site outreach. {built_in_copy}
             </p>
             <div class="radar-grid">
                 <div class="radar-card">
-                    <h3>Input</h3>
+                    <h3>Directory Input</h3>
                     <ul>
                         <li>Paste the exhibitor directory URL from the fair website.</li>
                         <li>Keep the built-in SKM base turned on unless you intentionally want a different list.</li>
@@ -3083,7 +3107,7 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
                     </ul>
                 </div>
                 <div class="radar-card">
-                    <h3>Workflow</h3>
+                    <h3>Operating Flow</h3>
                     <ul>
                         <li>Open a fair directory URL and click <strong>Scrape and Match</strong>.</li>
                         <li>Review <strong>Hall Map</strong> first to see where SKM density is highest.</li>
@@ -3091,7 +3115,7 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
                     </ul>
                 </div>
                 <div class="radar-card">
-                    <h3>Runtime</h3>
+                    <h3>Run Expectations</h3>
                     <ul>
                         <li>Some fairs finish in seconds, others take longer because they split data across many buckets.</li>
                         <li>Please wait patiently while the app scrapes and matches; a longer fair run can still be normal.</li>
