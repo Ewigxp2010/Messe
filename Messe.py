@@ -26,7 +26,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-clean-booth-board-v7"
+APP_BUILD = "2026-04-27-refined-dashboard-v8"
 
 # =========================
 # SKM matching
@@ -1942,10 +1942,10 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
         return
 
     records = _booth_sort_frame(df).to_dict(orient="records")
-    rows_to_show = min(len(records), 120)
-    for start in range(0, rows_to_show, 3):
-        cols = st.columns(3)
-        for idx, record in enumerate(records[start:start + 3]):
+    rows_to_show = min(len(records), 80)
+    for start in range(0, rows_to_show, 2):
+        cols = st.columns(2)
+        for idx, record in enumerate(records[start:start + 2]):
             with cols[idx]:
                 booth = str(record.get("booth", "") or "").strip()
                 hall = str(record.get("hall", "") or "").strip() or "Unknown Hall"
@@ -1969,13 +1969,16 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
                     if show_area:
                         st.caption(f"Area: {show_area}")
 
-                    button_cols = st.columns(2)
-                    with button_cols[0]:
-                        if detail_url:
-                            st.link_button("Detail", detail_url, use_container_width=True)
-                    with button_cols[1]:
-                        if website:
-                            st.link_button("Website", website, use_container_width=True)
+                    actions = []
+                    if detail_url:
+                        actions.append(("Detail", detail_url))
+                    if website:
+                        actions.append(("Website", website))
+                    if actions:
+                        button_cols = st.columns(len(actions))
+                        for button_col, (label, target) in zip(button_cols, actions):
+                            with button_col:
+                                st.link_button(label, target, use_container_width=True)
 
     if len(records) > rows_to_show:
         st.caption(f"Showing the first {rows_to_show} leads in card view. Use the table tabs for the full hall list.")
@@ -2116,6 +2119,32 @@ def _inject_app_css() -> None:
             padding-top: 2rem;
             max-width: 1240px;
         }
+        div[data-testid="stMetric"] {
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid rgba(31, 35, 48, 0.07);
+            border-radius: 14px;
+            padding: 16px 16px 14px;
+            box-shadow: 0 8px 22px rgba(39, 19, 8, 0.03);
+        }
+        div[data-testid="stMetric"] label {
+            color: #6b7280 !important;
+        }
+        div[data-testid="stMetricValue"] {
+            color: #1f2330;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] {
+            gap: 0.55rem;
+        }
+        button[kind="secondary"], button[kind="primary"] {
+            border-radius: 12px !important;
+        }
+        div[data-baseweb="tab-list"] {
+            gap: 6px;
+        }
+        button[role="tab"] {
+            border-radius: 10px !important;
+            padding: 8px 12px !important;
+        }
         .radar-hero {
             background: linear-gradient(135deg, #ffffff 0%, #fff9f7 58%, #fff1eb 100%);
             border: 1px solid rgba(242, 99, 71, 0.10);
@@ -2156,8 +2185,8 @@ def _inject_app_css() -> None:
             margin: 16px 0 10px 0;
         }
         .radar-card {
-            background: rgba(255, 255, 255, 0.82);
-            border: 1px solid rgba(31, 35, 48, 0.08);
+            background: rgba(255, 255, 255, 0.90);
+            border: 1px solid rgba(31, 35, 48, 0.06);
             border-radius: 14px;
             padding: 16px 16px 14px;
             min-height: 130px;
