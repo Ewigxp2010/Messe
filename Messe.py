@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import re
 import time
 import unicodedata
@@ -11,7 +12,7 @@ from difflib import SequenceMatcher
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse, urlunparse
 
 import pandas as pd
 import requests
@@ -25,7 +26,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-26-interzoo-fastpath-v3"
+APP_BUILD = "2026-04-27-interzoo-country-buckets-v4"
 
 # =========================
 # SKM matching
@@ -737,30 +738,74 @@ def _fetch_interzoo_algolia_exhibitors(config: ScrapeConfig) -> List[Dict[str, A
     }
 
     hits_per_page = 300
-    max_pages = max(1, config.max_pages)
     rows: List[Dict[str, Any]] = []
 
-    for page in range(max_pages):
-        params = (
-            f"query=&hitsPerPage={hits_per_page}&page={page}"
-            "&filters=site:interz AND isExhibitor:Ja"
+    countries = _fetch_interzoo_country_facets(search_url, headers, config)
+    if not countries:
+        countries = [None]
+
+    for country in countries:
+        rows.extend(
+            _fetch_interzoo_country_bucket(
+                search_url=search_url,
+                headers=headers,
+                config=config,
+                country=country,
+                hits_per_page=hits_per_page,
+            )
         )
+
+    LAST_SCRAPE_WARNINGS.append(
+        f"Used Interzoo structured search API for faster scraping across {len(countries)} country bucket(s)"
+    )
+    return rows
+
+
+def _fetch_interzoo_country_facets(search_url: str, headers: Dict[str, str], config: ScrapeConfig) -> List[str]:
+    params = 'query=&hitsPerPage=0&page=0&filters=site:interz AND isExhibitor:Ja&facets=%5B%22country%22%5D'
+    response = requests.post(search_url, headers=headers, json={"params": params}, timeout=config.timeout_seconds)
+    response.raise_for_status()
+    payload = response.json()
+    country_facets = ((payload.get("facets") or {}).get("country") or {})
+    return [country for country, count in country_facets.items() if count]
+
+
+def _fetch_interzoo_country_bucket(
+    search_url: str,
+    headers: Dict[str, str],
+    config: ScrapeConfig,
+    country: Optional[str],
+    hits_per_page: int,
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    base_filter = "site:interz AND isExhibitor:Ja"
+    scoped_filter = f'{base_filter} AND country:"{country}"' if country else base_filter
+
+    first_params = f"query=&hitsPerPage={hits_per_page}&page=0&filters={quote_plus(scoped_filter)}"
+    first_response = requests.post(
+        search_url,
+        headers=headers,
+        json={"params": first_params},
+        timeout=config.timeout_seconds,
+    )
+    first_response.raise_for_status()
+    first_payload = first_response.json()
+    total_hits = int(first_payload.get("nbHits") or 0)
+
+    payloads = [first_payload]
+    extra_pages = max(0, math.ceil(total_hits / hits_per_page) - 1)
+    for page in range(1, extra_pages + 1):
+        params = f"query=&hitsPerPage={hits_per_page}&page={page}&filters={quote_plus(scoped_filter)}"
         response = requests.post(search_url, headers=headers, json={"params": params}, timeout=config.timeout_seconds)
         response.raise_for_status()
-        payload = response.json()
-        hits = payload.get("hits") or []
-
-        for hit in hits:
-            rows.extend(_interzoo_rows_from_algolia_hit(hit, config.url))
-
-        nb_pages = int(payload.get("nbPages") or 0)
-        if page + 1 >= nb_pages:
-            break
-
+        payloads.append(response.json())
         if config.request_delay_seconds:
             time.sleep(min(config.request_delay_seconds, 0.05))
 
-    LAST_SCRAPE_WARNINGS.append("Used Interzoo structured search API for faster scraping")
+    for payload in payloads:
+        for hit in payload.get("hits") or []:
+            rows.extend(_interzoo_rows_from_algolia_hit(hit, config.url))
+
     return rows
 
 
