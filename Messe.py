@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-executive-console-interaction-v19"
+APP_BUILD = "2026-04-27-executive-console-premium-v20"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2791,7 +2791,10 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
                 )
 
     if len(records) > rows_to_show:
-        st.caption(f"Showing the first {rows_to_show} leads in card view. Use the table tabs for the full hall list.")
+        st.markdown(
+            f'<div class="lead-card-stack-note">Showing the first {rows_to_show} leads in card view. Use the table tabs for the full hall list.</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataFrame) -> None:
@@ -2896,7 +2899,16 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header:
     st.altair_chart((heatmap + labels).properties(height=chart_height), use_container_width=True)
     _render_hall_priority_strip(summary_df)
 
-    selected_hall = st.selectbox("Choose a hall to open the detailed operating view", halls)
+    st.markdown(
+        """
+        <div class="map-select-shell">
+            <div class="map-select-title">Detailed Operating View</div>
+            <div class="map-select-caption">Open one hall at a time to move from heatmap signal into booth-level execution.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    selected_hall = st.selectbox("Choose a hall to open the detailed operating view", halls, label_visibility="collapsed")
     _render_hall_drilldown(selected_hall, skm_df, all_df)
 
 
@@ -2968,6 +2980,9 @@ def _inject_app_css() -> None:
                 radial-gradient(circle at top right, rgba(245, 94, 66, 0.040), transparent 22%),
                 radial-gradient(circle at top left, rgba(17, 24, 39, 0.018), transparent 16%),
                 linear-gradient(180deg, #fafbfd 0%, #ffffff 22%, #ffffff 100%);
+            color: #1f2330;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
         .block-container {
             padding-top: 1.2rem;
@@ -3003,17 +3018,48 @@ def _inject_app_css() -> None:
         }
         button[kind="secondary"], button[kind="primary"] {
             border-radius: 12px !important;
+            min-height: 42px;
+            font-weight: 600 !important;
+            transition: transform 0.14s ease, box-shadow 0.18s ease, border-color 0.18s ease !important;
+        }
+        button[kind="primary"] {
+            background: linear-gradient(135deg, #f25f45 0%, #e8563e 100%) !important;
+            border: 1px solid rgba(214, 78, 54, 0.78) !important;
+            box-shadow: 0 12px 24px rgba(242, 95, 69, 0.18) !important;
+        }
+        button[kind="primary"]:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 16px 28px rgba(242, 95, 69, 0.24) !important;
+        }
+        button[kind="secondary"] {
+            background: rgba(255, 255, 255, 0.98) !important;
+            border: 1px solid rgba(25, 28, 38, 0.075) !important;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.03) !important;
+        }
+        button[kind="secondary"]:hover {
+            transform: translateY(-1px);
+            border-color: rgba(164, 71, 51, 0.16) !important;
         }
         div[data-testid="stFileUploader"] {
             background: rgba(255,255,255,0.84);
             border: 1px solid rgba(25, 28, 38, 0.06);
             border-radius: 16px;
             padding: 8px;
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.024);
         }
         div[data-baseweb="select"] > div,
         div[data-baseweb="input"] > div,
         div[data-testid="stNumberInputContainer"] > div {
             border-radius: 12px !important;
+            border-color: rgba(25, 28, 38, 0.08) !important;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.02);
+        }
+        div[data-testid="stExpander"] {
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.022);
+            background: rgba(255,255,255,0.94);
         }
         div[data-baseweb="tab-list"] {
             gap: 6px;
@@ -3168,7 +3214,7 @@ def _inject_app_css() -> None:
             color: #252833;
         }
         .section-header {
-            margin: 16px 0 10px 0;
+            margin: 18px 0 10px 0;
         }
         .section-eyebrow {
             color: #7b818f;
@@ -3336,6 +3382,21 @@ def _inject_app_css() -> None:
             border-radius: 14px;
             padding: 12px 12px 10px;
             box-shadow: 0 12px 24px rgba(15, 23, 42, 0.03);
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.16s ease, box-shadow 0.18s ease;
+        }
+        .hall-priority-card::before {
+            content: "";
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 3px;
+            background: linear-gradient(180deg, #f25f45 0%, #e8563e 100%);
+            opacity: 0.9;
+        }
+        .hall-priority-card:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 16px 28px rgba(15, 23, 42, 0.05);
         }
         .hall-priority-hall {
             color: #1f2330;
@@ -3363,6 +3424,22 @@ def _inject_app_css() -> None:
             padding: 14px 14px 12px;
             box-shadow: 0 14px 28px rgba(15, 23, 42, 0.035);
             min-height: 188px;
+            transition: transform 0.16s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .booth-card::before {
+            content: "";
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 3px;
+            background: linear-gradient(180deg, rgba(242, 95, 69, 0.88) 0%, rgba(242, 95, 69, 0.18) 100%);
+            opacity: 0.85;
+        }
+        .booth-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(164, 71, 51, 0.14);
+            box-shadow: 0 18px 32px rgba(15, 23, 42, 0.055);
         }
         .booth-card-top {
             display: flex;
@@ -3455,6 +3532,32 @@ def _inject_app_css() -> None:
         .booth-card-link:hover {
             border-color: rgba(164, 71, 51, 0.18);
             color: #a44733 !important;
+        }
+        .lead-card-stack-note {
+            color: #7b818f;
+            font-size: 0.82rem;
+            line-height: 1.4;
+            margin-top: 10px;
+        }
+        .map-select-shell {
+            margin-top: 12px;
+            padding: 14px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.98);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            box-shadow: 0 12px 26px rgba(15, 23, 42, 0.03);
+        }
+        .map-select-title {
+            color: #1f2330;
+            font-size: 0.92rem;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .map-select-caption {
+            color: #667085;
+            font-size: 0.84rem;
+            line-height: 1.4;
+            margin-bottom: 10px;
         }
         .build-chip {
             display: inline-flex;
