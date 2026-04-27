@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-executive-console-drilldown-v17"
+APP_BUILD = "2026-04-27-executive-console-booth-cards-v18"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2723,28 +2723,36 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
                 badge = "SKM" if match_status == "SKM Match" else "Lead"
                 location = f"{hall} / {booth}" if booth else hall
                 exhibitor_name = str(record.get("exhibitor_name", "") or "").strip()
+                safe_badge_class = "lead" if badge == "Lead" else "skm"
+                meta_chips = [f'<span class="booth-card-meta-chip">{html.escape(country)}</span>']
+                if booth:
+                    meta_chips.append(f'<span class="booth-card-meta-chip">Booth {html.escape(booth)}</span>')
+                if show_area:
+                    meta_chips.append(f'<span class="booth-card-meta-chip">{html.escape(show_area)}</span>')
 
-                with st.container(border=True):
-                    top_left, top_right = st.columns([1, 2])
-                    with top_left:
-                        st.caption(badge)
-                    with top_right:
-                        st.caption(location)
-                    st.markdown(f"**{exhibitor_name}**")
-                    st.caption(country)
-                    if show_area:
-                        st.caption(f"Area: {show_area}")
+                link_parts = []
+                if detail_url:
+                    link_parts.append(f'<a class="booth-card-link" href="{html.escape(detail_url, quote=True)}" target="_blank">Detail</a>')
+                if website:
+                    link_parts.append(f'<a class="booth-card-link" href="{html.escape(website, quote=True)}" target="_blank">Website</a>')
+                links_html = f'<div class="booth-card-links">{"".join(link_parts)}</div>' if link_parts else ""
 
-                    actions = []
-                    if detail_url:
-                        actions.append(("Detail", detail_url))
-                    if website:
-                        actions.append(("Website", website))
-                    if actions:
-                        button_cols = st.columns(len(actions))
-                        for button_col, (label, target) in zip(button_cols, actions):
-                            with button_col:
-                                st.link_button(label, target, use_container_width=True)
+                st.markdown(
+                    f"""
+                    <div class="booth-card">
+                        <div class="booth-card-top">
+                            <span class="booth-card-badge {safe_badge_class}">{html.escape(badge)}</span>
+                            <div class="booth-card-location">{html.escape(location)}</div>
+                        </div>
+                        <div class="booth-card-name">{html.escape(exhibitor_name)}</div>
+                        <div class="booth-card-meta">
+                            {"".join(meta_chips)}
+                        </div>
+                        {links_html}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
     if len(records) > rows_to_show:
         st.caption(f"Showing the first {rows_to_show} leads in card view. Use the table tabs for the full hall list.")
@@ -3278,6 +3286,91 @@ def _inject_app_css() -> None:
             background: rgba(245, 94, 66, 0.06);
             color: #a44733;
             border-color: rgba(164, 71, 51, 0.10);
+        }
+        .booth-card {
+            background: rgba(255, 255, 255, 0.985);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 16px;
+            padding: 14px 14px 12px;
+            box-shadow: 0 14px 28px rgba(15, 23, 42, 0.035);
+            min-height: 188px;
+        }
+        .booth-card-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .booth-card-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 5px 9px;
+            border-radius: 999px;
+            background: rgba(245, 94, 66, 0.08);
+            color: #a44733;
+            font-size: 0.74rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+        .booth-card-badge.lead {
+            background: rgba(17, 24, 39, 0.055);
+            color: #4b5563;
+        }
+        .booth-card-location {
+            color: #667085;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-align: right;
+        }
+        .booth-card-name {
+            color: #1f2330;
+            font-size: 1.02rem;
+            font-weight: 700;
+            line-height: 1.3;
+            margin-bottom: 10px;
+        }
+        .booth-card-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .booth-card-meta-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 9px;
+            border-radius: 999px;
+            background: #f7f8fb;
+            border: 1px solid rgba(25, 28, 38, 0.05);
+            color: #566072;
+            font-size: 0.8rem;
+            line-height: 1;
+        }
+        .booth-card-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .booth-card-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 34px;
+            padding: 0 12px;
+            border-radius: 10px;
+            background: #ffffff;
+            border: 1px solid rgba(25, 28, 38, 0.07);
+            color: #1f2330 !important;
+            font-size: 0.82rem;
+            font-weight: 600;
+            text-decoration: none !important;
+        }
+        .booth-card-link:hover {
+            border-color: rgba(164, 71, 51, 0.18);
+            color: #a44733 !important;
         }
         .build-chip {
             display: inline-flex;
