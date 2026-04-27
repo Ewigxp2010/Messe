@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-focus-countries-executive-v23"
+APP_BUILD = "2026-04-27-run-summary-v24"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2455,6 +2455,39 @@ def _focus_country_rows(df: pd.DataFrame, country_key: str) -> pd.DataFrame:
     return df[_country_focus_mask(df["country"], country_key)].copy()
 
 
+def run_summary_frame(all_df: pd.DataFrame) -> pd.DataFrame:
+    total_rows = len(all_df)
+    skm_df = skm_leads(all_df)
+    review_df = review_leads(all_df)
+    hall_count = 0
+    booth_count = 0
+    country_count = 0
+    source_url = ""
+
+    if total_rows:
+        if "hall" in all_df.columns:
+            hall_count = int(all_df["hall"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+        if "booth" in all_df.columns:
+            booth_count = int(all_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
+        if "country" in all_df.columns:
+            country_count = int(all_df["country"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+        if "source_url" in all_df.columns:
+            source_values = [str(v).strip() for v in all_df["source_url"].fillna("").tolist() if str(v).strip()]
+            source_url = source_values[0] if source_values else ""
+
+    rows = [
+        {"metric": "Run Date", "value": time.strftime("%Y-%m-%d %H:%M:%S")},
+        {"metric": "Source URL", "value": source_url},
+        {"metric": "Total Exhibitor Rows", "value": total_rows},
+        {"metric": "SKM Exhibitor Rows", "value": len(skm_df)},
+        {"metric": "Possible Matches", "value": len(review_df)},
+        {"metric": "Unique Halls", "value": hall_count},
+        {"metric": "Booth-level Rows", "value": booth_count},
+        {"metric": "Source Countries", "value": country_count},
+    ]
+    return pd.DataFrame(rows)
+
+
 def build_excel_download(all_df: pd.DataFrame) -> bytes:
     output = BytesIO()
     skm_df = sort_leads_by_hall(skm_leads(all_df))
@@ -2465,8 +2498,10 @@ def build_excel_download(all_df: pd.DataFrame) -> bytes:
     all_country_df = country_summary(all_sorted, row_label="lead_rows")
     germany_skm_df = order_columns(sort_leads_by_hall(_focus_country_rows(skm_df, "germany")))
     china_skm_df = order_columns(sort_leads_by_hall(_focus_country_rows(skm_df, "china")))
+    run_summary_df = run_summary_frame(all_df)
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        run_summary_df.to_excel(writer, sheet_name="Run Summary", index=False)
         summary_df.to_excel(writer, sheet_name="SKM by Hall", index=False)
         skm_country_df.to_excel(writer, sheet_name="SKM by Country", index=False)
         all_country_df.to_excel(writer, sheet_name="All by Country", index=False)
@@ -3095,6 +3130,22 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
             st.dataframe(all_country_df, use_container_width=True, hide_index=True)
 
 
+def _render_run_summary_panel(result_df: pd.DataFrame) -> None:
+    summary_df = run_summary_frame(result_df)
+    st.markdown(
+        """
+        <div class="dashboard-note">
+            <div class="dashboard-note-title">Run Summary</div>
+            <div class="dashboard-note-body">
+                A compact run record for sharing, export checks, and quick verification of the current fair analysis.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+
 def _render_results(result_df: pd.DataFrame) -> None:
     summary = summarize_matches(_safe_records(result_df))
     skm_df = sort_leads_by_hall(skm_leads(result_df))
@@ -3130,6 +3181,8 @@ def _render_results(result_df: pd.DataFrame) -> None:
     _render_section_header("Hall Intelligence", "SKM Hall Map", "Start with hall concentration, then move into the selected hall for booth-level execution.")
     _render_hall_map(skm_df, all_sorted, show_header=False)
     _render_country_intelligence(skm_df, all_sorted)
+    _render_section_header("Run Record", "Run Summary", "A compact record of the current fair run, including source URL and coverage totals.")
+    _render_run_summary_panel(result_df)
 
     tabs = ["SKM Exhibitor Leads", "All Exhibitor Leads"]
     if not review_df.empty:
