@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-premium-console-ui-v14"
+APP_BUILD = "2026-04-27-executive-console-v15"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2802,7 +2802,7 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> None:
 
 def _render_results(result_df: pd.DataFrame) -> None:
     summary = summarize_matches(_safe_records(result_df))
-    _render_section_header("Overview", "Exhibition Lead Summary", "A clean view of total coverage, priority merchants, and export actions.")
+    _render_section_header("Overview", "Fair Command Summary", "A concise operating view of fair coverage, priority merchants, and export-ready output.")
     metric_cols = st.columns(3)
     metric_cols[0].metric("Total Exhibitors", summary["total"])
     metric_cols[1].metric("SKM Exhibitor Leads", summary["skm_matches"])
@@ -2810,12 +2810,14 @@ def _render_results(result_df: pd.DataFrame) -> None:
 
     action_left, action_right = st.columns([1.2, 1])
     with action_left:
+        st.markdown('<div class="summary-actions">', unsafe_allow_html=True)
         _render_downloads(result_df)
+        st.markdown("</div>", unsafe_allow_html=True)
     with action_right:
         st.markdown(
             """
             <div class="dashboard-note">
-                <div class="dashboard-note-title">Working Mode</div>
+                <div class="dashboard-note-title">Field Operating Mode</div>
                 <div class="dashboard-note-body">
                     Start with hall concentration, then move into booth-level follow-up.
                     Use the exports when you need an offline lead sheet for the floor.
@@ -2839,7 +2841,7 @@ def _render_results(result_df: pd.DataFrame) -> None:
     with tab_map:
         _render_hall_map(skm_df, all_sorted)
     with tab_skm:
-        _render_section_header("Priority Leads", "SKM Exhibitor Leads", "High-confidence SKM matches across the full fair.")
+        _render_section_header("Priority Leads", "SKM Exhibitor Leads", "High-confidence SKM merchants, ready for booth-level follow-up.")
         st.dataframe(
             order_columns(skm_df),
             use_container_width=True,
@@ -2847,11 +2849,11 @@ def _render_results(result_df: pd.DataFrame) -> None:
         )
     if not review_df.empty:
         with rendered_tabs[2]:
-            _render_section_header("Review Queue", "Possible Matches", "Lower-confidence matches kept separate from the main SKM workflow.")
+            _render_section_header("Review Queue", "Possible Matches", "Lower-confidence matches separated from the main SKM operating list.")
             st.caption("These are lower-confidence fuzzy matches. Use them only as a backup review list.")
             st.dataframe(order_columns(review_df), use_container_width=True, hide_index=True)
     with tab_all:
-        _render_section_header("Full Coverage", "All Exhibitor Leads", "The full fair lead list, ordered for browsing and export.")
+        _render_section_header("Full Coverage", "All Exhibitor Leads", "The complete fair lead list, ordered for review, filtering, and export.")
         st.dataframe(order_columns(all_sorted), use_container_width=True, hide_index=True)
 
 
@@ -3105,6 +3107,50 @@ def _inject_app_css() -> None:
             font-size: 0.9rem;
             line-height: 1.45;
         }
+        .summary-actions {
+            margin: 10px 0 6px 0;
+        }
+        .console-panel {
+            background: rgba(255, 255, 255, 0.975);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 18px;
+            padding: 16px;
+            box-shadow: 0 16px 34px rgba(15, 23, 42, 0.04);
+        }
+        .console-panel-tight {
+            padding: 12px 12px 8px;
+        }
+        .console-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .console-toolbar-title {
+            color: #1f2330;
+            font-size: 0.98rem;
+            font-weight: 700;
+        }
+        .console-toolbar-caption {
+            color: #667085;
+            font-size: 0.84rem;
+            line-height: 1.4;
+        }
+        .build-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.76);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            color: #5f6778;
+            font-size: 0.8rem;
+        }
+        .build-chip strong {
+            color: #1f2330;
+        }
         .hall-stat-card {
             background: rgba(255, 255, 255, 0.94);
             border: 1px solid rgba(25, 28, 38, 0.06);
@@ -3276,7 +3322,10 @@ def main() -> None:
             website_selector = st.text_input("Website selector", placeholder="a.website")
             detail_link_selector = st.text_input("Detail page link selector", placeholder="a.detail")
 
-        st.caption(f"Build: {APP_BUILD}")
+        st.markdown(
+            f'<div class="build-chip"><strong>Build</strong> {APP_BUILD}</div>',
+            unsafe_allow_html=True,
+        )
 
     _render_onboarding(has_builtin_skm)
 
