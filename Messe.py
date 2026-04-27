@@ -6,6 +6,8 @@ import math
 import re
 import time
 import unicodedata
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -26,7 +28,19 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-professional-dashboard-v9"
+APP_BUILD = "2026-04-27-generic-sitemap-fallback-v10"
+
+SITEMAP_DETAIL_HINTS = (
+    "/exhprofiles/",
+    "/exhibitors/",
+    "/aussteller/",
+    "/companies/",
+    "/company/",
+    "/profiles/",
+    "/profile/",
+    "/brands/",
+    "/brand/",
+)
 
 # =========================
 # SKM matching
@@ -658,6 +672,7 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
     urls = _build_page_urls(config)
     all_rows: List[Dict[str, Any]] = []
     seen_page_fingerprints = set()
+    first_page_html = ""
 
     for index, url in enumerate(urls):
         try:
@@ -686,6 +701,9 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
                 url = discovered_url
                 html = fetch_html_with_retry(url, config)
 
+        if index == 0:
+            first_page_html = html
+
         fingerprint = _page_fingerprint(html)
         if fingerprint in seen_page_fingerprints:
             LAST_SCRAPE_WARNINGS.append(f"Stopped at {url}: repeated page detected")
@@ -705,6 +723,10 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
             time.sleep(config.request_delay_seconds)
 
     rows = _dedupe_exhibitors(all_rows)
+    if _should_try_sitemap_profile_fallback(config, first_page_html, rows):
+        sitemap_rows = _try_sitemap_profile_fetch(config)
+        if sitemap_rows:
+            rows = _dedupe_exhibitors(sitemap_rows)
     if config.crawl_detail_pages:
         rows = enrich_from_detail_pages(rows, config)
     return rows
@@ -723,6 +745,32 @@ def _try_site_specific_exhibitor_fetch(config: ScrapeConfig) -> Optional[List[Di
             return None
 
     return None
+
+
+def _should_try_sitemap_profile_fallback(config: ScrapeConfig, first_page_html: str, rows: Sequence[Dict[str, Any]]) -> bool:
+    parsed = urlparse(config.url)
+    path = parsed.path.lower()
+    host = parsed.netloc.lower()
+    row_count = len(rows)
+
+    if any(token in host for token in ["interzoo.com"]):
+        return False
+
+    if row_count == 0:
+        return True
+
+    if path.startswith("/vis/") or "/vis/" in path:
+        return row_count < 100
+
+    if _looks_like_client_rendered_directory(first_page_html):
+        return row_count < 100
+
+    suspicious_names = 0
+    for row in rows[:50]:
+        name = _clean_text(row.get("exhibitor_name", "")).lower()
+        if any(token in name for token in ["navigation", "footer", "faq", "english", "german", "companies"]):
+            suspicious_names += 1
+    return row_count < 30 or suspicious_names >= max(3, row_count // 4)
 
 
 def _fetch_interzoo_algolia_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
@@ -759,6 +807,232 @@ def _fetch_interzoo_algolia_exhibitors(config: ScrapeConfig) -> List[Dict[str, A
         f"Used Interzoo structured search API for faster scraping across {len(countries)} country bucket(s)"
     )
     return rows
+
+
+def _try_sitemap_profile_fetch(config: ScrapeConfig) -> Optional[List[Dict[str, Any]]]:
+    try:
+        sitemap_urls = _discover_sitemaps_from_robots(config.url, config)
+        if not sitemap_urls:
+            return None
+
+        detail_urls = _collect_profile_urls_from_sitemaps(sitemap_urls, config)
+        if len(detail_urls) < 25:
+            return None
+
+        rows = _fetch_profile_rows_concurrently(detail_urls, config)
+        rows = [row for row in rows if _is_valid_exhibitor(row)]
+        if not rows:
+            return None
+
+        LAST_SCRAPE_WARNINGS.append(
+            f"Used sitemap profile fallback across {len(detail_urls)} exhibitor profile page(s)"
+        )
+        return rows
+    except Exception as exc:
+        LAST_SCRAPE_WARNINGS.append(f"Sitemap profile fallback failed, continued with HTML scraping: {exc}")
+        return None
+
+
+def _discover_sitemaps_from_robots(base_url: str, config: ScrapeConfig) -> List[str]:
+    parsed = urlparse(base_url)
+    robots_url = f"{parsed.scheme or 'https'}://{parsed.netloc}/robots.txt"
+    response = requests.get(
+        robots_url,
+        headers={"User-Agent": config.user_agent, "Accept-Language": "de-DE,de;q=0.9,en;q=0.8"},
+        timeout=config.timeout_seconds,
+    )
+    response.raise_for_status()
+
+    sitemap_urls: List[str] = []
+    for line in response.text.splitlines():
+        if line.lower().startswith("sitemap:"):
+            url = _clean_text(line.split(":", 1)[1])
+            if url:
+                sitemap_urls.append(url)
+
+    return list(dict.fromkeys(sitemap_urls))
+
+
+def _collect_profile_urls_from_sitemaps(sitemap_urls: Sequence[str], config: ScrapeConfig) -> List[str]:
+    profile_urls: List[str] = []
+    base_host = urlparse(config.url).netloc.lower()
+
+    for sitemap_url in sitemap_urls[:20]:
+        try:
+            response = requests.get(
+                sitemap_url,
+                headers={"User-Agent": config.user_agent, "Accept-Language": "de-DE,de;q=0.9,en;q=0.8"},
+                timeout=config.timeout_seconds,
+            )
+            response.raise_for_status()
+            locs = _parse_sitemap_locs(response.text)
+        except Exception:
+            continue
+
+        matched = [loc for loc in locs if _looks_like_exhibitor_profile_url(loc, base_host)]
+        if matched:
+            profile_urls.extend(matched)
+
+    return list(dict.fromkeys(profile_urls))
+
+
+def _parse_sitemap_locs(xml_text: str) -> List[str]:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return []
+
+    locs: List[str] = []
+    namespace = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    for node in root.findall(".//sm:loc", namespace):
+        text = _clean_text(node.text)
+        if text:
+            locs.append(text)
+    return locs
+
+
+def _looks_like_exhibitor_profile_url(url: str, base_host: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.netloc.lower() != base_host:
+        return False
+
+    lower = parsed.path.lower()
+    if any(hint in lower for hint in SITEMAP_DETAIL_HINTS):
+        if any(token in lower for token in ["/directory/", "/search", "/catalogue", "/countries"]):
+            return False
+        return True
+    return False
+
+
+def _fetch_profile_rows_concurrently(detail_urls: Sequence[str], config: ScrapeConfig) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    errors = 0
+    max_workers = min(4, max(1, len(detail_urls)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_fetch_profile_row_from_meta, detail_url, config): detail_url for detail_url in detail_urls}
+        for future in as_completed(futures):
+            try:
+                row = future.result()
+            except Exception:
+                errors += 1
+                continue
+            if row:
+                rows.append(row)
+    if errors:
+        LAST_SCRAPE_WARNINGS.append(f"Sitemap profile fetch skipped {errors} page(s) after retries")
+    return rows
+
+
+def _fetch_profile_row_from_meta(detail_url: str, config: ScrapeConfig) -> Optional[Dict[str, Any]]:
+    time.sleep(0.03)
+    html = fetch_html_with_retry(detail_url, config, retries=4)
+
+    title = _meta_content(html, "title")
+    description = _meta_content(html, "description")
+    og_description = _meta_property_content(html, "og:description")
+    effective_description = description or og_description
+
+    exhibitor_name, location_text = _parse_profile_title(title)
+    hall, booth = extract_hall_booth(effective_description)
+    country = _extract_country_from_location_text(location_text)
+    website = extract_website_from_html(html, detail_url)
+
+    raw_text = " ".join(part for part in [title, effective_description] if part)
+    row = _make_row(
+        name=exhibitor_name,
+        hall=hall,
+        booth=booth,
+        country=country,
+        website=website,
+        detail_url=detail_url,
+        source_url=config.url,
+        raw_text=raw_text,
+        method="sitemap_profile",
+    )
+    return row if _is_valid_exhibitor(row) else None
+
+
+def _meta_content(html: str, name: str) -> str:
+    pattern = re.compile(
+        rf'<meta[^>]+name=["\']{re.escape(name)}["\'][^>]+content=["\']([^"\']*)["\']',
+        flags=re.IGNORECASE,
+    )
+    match = pattern.search(html)
+    return _clean_text(match.group(1)) if match else ""
+
+
+def _meta_property_content(html: str, prop: str) -> str:
+    pattern = re.compile(
+        rf'<meta[^>]+property=["\']{re.escape(prop)}["\'][^>]+content=["\']([^"\']*)["\']',
+        flags=re.IGNORECASE,
+    )
+    match = pattern.search(html)
+    return _clean_text(match.group(1)) if match else ""
+
+
+def _parse_profile_title(title: str) -> Tuple[str, str]:
+    text = _clean_text(title)
+    if not text:
+        return "", ""
+
+    patterns = [
+        r"^(?P<name>.+?)\s+aus\s+(?P<location>.+?)\s+auf der\s+.+$",
+        r"^(?P<name>.+?)\s+from\s+(?P<location>.+?)\s+at\s+.+$",
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return _clean_text(match.group("name")), _clean_text(match.group("location"))
+
+    stripped = re.sub(r"\s+--\s+.*$", "", text)
+    return stripped, ""
+
+
+def _extract_country_from_location_text(location_text: str) -> str:
+    text = _clean_text(location_text)
+    if not text:
+        return ""
+
+    known_countries = [
+        "Germany",
+        "Deutschland",
+        "Austria",
+        "Österreich",
+        "Switzerland",
+        "Schweiz",
+        "Netherlands",
+        "Niederlande",
+        "Belgium",
+        "Belgien",
+        "France",
+        "Frankreich",
+        "Italy",
+        "Italien",
+        "Spain",
+        "Spanien",
+        "Poland",
+        "Polen",
+        "Türkiye",
+        "Turkey",
+        "China",
+        "Japan",
+        "Korea",
+        "USA",
+        "United States",
+        "United Kingdom",
+        "UK",
+        "Luxembourg",
+        "Luxemburg",
+    ]
+    for country in known_countries:
+        if re.search(rf"\b{re.escape(country)}\b", text, flags=re.IGNORECASE):
+            return country
+
+    if "," in text:
+        tail = _clean_text(text.split(",")[-1])
+        if len(tail) >= 4:
+            return tail
+    return ""
 
 
 def _fetch_interzoo_country_facets(search_url: str, headers: Dict[str, str], config: ScrapeConfig) -> List[str]:
@@ -861,6 +1135,16 @@ def _page_fingerprint(html: str) -> str:
     return hashlib.sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()
 
 
+def _looks_like_client_rendered_directory(html: str) -> bool:
+    lower = html.lower()
+    return (
+        'id="finder-app"' in lower
+        or "finder-base-config" in lower
+        or 'data-route="directory"' in lower
+        or "Diese Seite benötigt JavaScript".lower() in lower
+    )
+
+
 def _is_likely_exhibitor_directory_url(url: str) -> bool:
     parsed = urlparse(url)
     path = parsed.path.lower().strip("/")
@@ -955,6 +1239,9 @@ def _build_page_urls(config: ScrapeConfig) -> List[str]:
 
 
 def _find_next_url(html: str, base_url: str) -> str:
+    if _looks_like_client_rendered_directory(html):
+        return ""
+
     BeautifulSoup = _require_bs4()
     soup = BeautifulSoup(html, "html.parser")
     selectors = [
@@ -1495,7 +1782,10 @@ def _looks_like_company_name(text: str) -> bool:
         return False
     if len(text) < 2 or len(text) > 140:
         return False
-    if re.search(r"(privacy|cookie|terms|login|newsletter|ticket|program|agenda|speaker)", lower):
+    if re.search(
+        r"(privacy|cookie|terms|login|newsletter|ticket|program|agenda|speaker|navigation|footer|companies|english|german|faq|sidebar)",
+        lower,
+    ):
         return False
     if len(re.findall(r"[A-Za-zÄÖÜäöüß0-9]", text)) < 2:
         return False
@@ -1604,7 +1894,16 @@ def extract_website_from_html(html: str, base_url: str) -> str:
 
 def _dedupe_exhibitors(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     best_by_key: Dict[str, Dict[str, Any]] = {}
-    method_rank = {"custom_selector": 5, "brand_card": 5, "algolia_interzoo": 5, "json": 4, "table": 4, "card": 3, "link": 1}
+    method_rank = {
+        "custom_selector": 5,
+        "brand_card": 5,
+        "algolia_interzoo": 5,
+        "sitemap_profile": 5,
+        "json": 4,
+        "table": 4,
+        "card": 3,
+        "link": 1,
+    }
 
     for row in rows:
         name = normalize_company_name(row.get("exhibitor_name", ""))
