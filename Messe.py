@@ -439,15 +439,40 @@ def match_exhibitors_to_skm(
 
 def summarize_matches(rows: Iterable[Dict[str, Any]]) -> Dict[str, int]:
     summary = {"total": 0, "skm_matches": 0, "review": 0, "unmatched": 0}
+    status_rank = {"SKM Match": 3, "Needs Review": 2, "No Match": 1, "": 0}
+    best_status_by_exhibitor: Dict[str, str] = {}
+    source_total_exhibitors = 0
+
     for row in rows:
+        source_total_exhibitors = max(
+            source_total_exhibitors,
+            int(row.get("__source_total_exhibitors") or 0),
+        )
+        exhibitor_key = (
+            _clean_text(row.get("exhibitor_uid"))
+            or _clean_text(row.get("detail_url"))
+            or normalize_company_name(row.get("exhibitor_name", ""))
+        )
+        if not exhibitor_key:
+            continue
+
+        status = _clean_text(row.get("match_status"))
+        previous = best_status_by_exhibitor.get(exhibitor_key, "")
+        if status_rank.get(status, 0) >= status_rank.get(previous, 0):
+            best_status_by_exhibitor[exhibitor_key] = status
+
+    for status in best_status_by_exhibitor.values():
         summary["total"] += 1
-        status = row.get("match_status")
         if status == "SKM Match":
             summary["skm_matches"] += 1
         elif status == "Needs Review":
             summary["review"] += 1
         else:
             summary["unmatched"] += 1
+
+    if source_total_exhibitors:
+        summary["total"] = source_total_exhibitors
+        summary["unmatched"] = max(0, summary["total"] - summary["skm_matches"] - summary["review"])
     return summary
 
 # =========================
@@ -894,6 +919,9 @@ def _fetch_messefrankfurt_directory_exhibitors(config: ScrapeConfig) -> Optional
         if config.request_delay_seconds:
             time.sleep(min(config.request_delay_seconds, 0.15))
 
+    for row in rows:
+        row["__source_total_exhibitors"] = total_hits
+
     LAST_SCRAPE_WARNINGS.append(
         f"Used Messe Frankfurt exhibitor API for {event_id} across {total_pages} page(s); "
         f"{total_hits} exhibitors expanded into {len(rows)} hall/booth row(s)"
@@ -966,6 +994,7 @@ def _messefrankfurt_rows_from_hit(
             raw_text=name,
             method="messefrankfurt_es_api",
         )
+        row["exhibitor_uid"] = _clean_text(exhibitor.get("id") or exhibitor.get("rewriteId") or detail_url or name)
         if show_area:
             row["show_area"] = show_area
         return [row] if _is_valid_exhibitor(row) else []
@@ -987,6 +1016,7 @@ def _messefrankfurt_rows_from_hit(
                 raw_text=f"{name} {hall_name} {country}",
                 method="messefrankfurt_es_api",
             )
+            row["exhibitor_uid"] = _clean_text(exhibitor.get("id") or exhibitor.get("rewriteId") or detail_url or name)
             if show_area:
                 row["show_area"] = show_area
             if _is_valid_exhibitor(row):
@@ -1006,6 +1036,7 @@ def _messefrankfurt_rows_from_hit(
                 raw_text=f"{name} {hall_name} {booth} {country}",
                 method="messefrankfurt_es_api",
             )
+            row["exhibitor_uid"] = _clean_text(exhibitor.get("id") or exhibitor.get("rewriteId") or detail_url or name)
             if show_area:
                 row["show_area"] = show_area
             if _is_valid_exhibitor(row):
