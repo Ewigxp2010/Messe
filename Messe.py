@@ -1897,7 +1897,69 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
         )
 
 
-def _render_hall_map(skm_df: pd.DataFrame) -> None:
+def _hall_filtered_rows(df: pd.DataFrame, hall: str) -> pd.DataFrame:
+    if df.empty or "hall" not in df.columns:
+        return df.head(0)
+    normalized_hall = df["hall"].fillna("").replace("", "Unknown Hall")
+    return df[normalized_hall == hall].copy()
+
+
+def _booth_coverage(df: pd.DataFrame) -> int:
+    if df.empty or "booth" not in df.columns:
+        return 0
+    return int(df["booth"].fillna("").astype(str).str.strip().ne("").sum())
+
+
+def _render_hall_snapshot_card(title: str, value: int, caption: str) -> None:
+    st.markdown(
+        f"""
+        <div class="hall-stat-card">
+            <div class="hall-stat-title">{title}</div>
+            <div class="hall-stat-value">{value}</div>
+            <div class="hall-stat-caption">{caption}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataFrame) -> None:
+    hall_skm = sort_leads_by_hall(_hall_filtered_rows(skm_rows, hall))
+    hall_all = sort_leads_by_hall(_hall_filtered_rows(all_rows, hall))
+    skm_booth_count = _booth_coverage(hall_skm)
+    all_booth_count = _booth_coverage(hall_all)
+    countries = []
+    if not hall_all.empty and "country" in hall_all.columns:
+        countries = sorted({str(v) for v in hall_all["country"].fillna("") if str(v).strip()})
+
+    st.markdown(f"### {hall}")
+    stat_cols = st.columns(4)
+    with stat_cols[0]:
+        _render_hall_snapshot_card("SKM Leads", len(hall_skm), "Priority merchants in this hall")
+    with stat_cols[1]:
+        _render_hall_snapshot_card("All Leads", len(hall_all), "All exhibitors captured for this hall")
+    with stat_cols[2]:
+        _render_hall_snapshot_card("SKM with Booth", skm_booth_count, "SKM leads with booth positions")
+    with stat_cols[3]:
+        _render_hall_snapshot_card("All with Booth", all_booth_count, "All leads with booth positions")
+
+    if countries:
+        st.caption("Countries in this hall: " + ", ".join(countries[:18]) + (" ..." if len(countries) > 18 else ""))
+
+    hall_tabs = st.tabs(["SKM in Hall", "All Leads in Hall"])
+    with hall_tabs[0]:
+        if hall_skm.empty:
+            st.info("No SKM leads found in this hall.")
+        else:
+            st.dataframe(order_columns(hall_skm), use_container_width=True, hide_index=True)
+    with hall_tabs[1]:
+        if hall_all.empty:
+            st.info("No exhibitor leads found in this hall.")
+        else:
+            st.dataframe(order_columns(hall_all), use_container_width=True, hide_index=True)
+
+
+def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> None:
     st.subheader("SKM Hall Heatmap")
     if skm_df.empty:
         st.info("No SKM exhibitor leads found yet.")
@@ -1940,11 +2002,8 @@ def _render_hall_map(skm_df: pd.DataFrame) -> None:
     chart_height = max(240, int((summary_df["map_row"].max() + 1) * 95))
     st.altair_chart((heatmap + labels).properties(height=chart_height), use_container_width=True)
 
-    selected_hall = st.selectbox("Select a hall to view SKM merchant details", halls)
-    normalized_hall = skm_df["hall"].fillna("").replace("", "Unknown Hall")
-    hall_rows = skm_df[normalized_hall == selected_hall]
-    st.markdown(f"**{selected_hall}: {len(hall_rows)} SKM lead(s)**")
-    st.dataframe(order_columns(sort_leads_by_hall(hall_rows)), use_container_width=True, hide_index=True)
+    selected_hall = st.selectbox("Select a hall to view detailed lead distribution", halls)
+    _render_hall_drilldown(selected_hall, skm_df, all_df)
 
 
 def _render_results(result_df: pd.DataFrame) -> None:
@@ -1967,7 +2026,7 @@ def _render_results(result_df: pd.DataFrame) -> None:
     tab_skm = rendered_tabs[1]
     tab_all = rendered_tabs[-1]
     with tab_map:
-        _render_hall_map(skm_df)
+        _render_hall_map(skm_df, sort_leads_by_hall(result_df))
     with tab_skm:
         st.dataframe(
             order_columns(skm_df),
@@ -2072,6 +2131,33 @@ def _inject_app_css() -> None:
         }
         .radar-note strong {
             color: #252833;
+        }
+        .hall-stat-card {
+            background: rgba(255, 255, 255, 0.88);
+            border: 1px solid rgba(31, 35, 48, 0.08);
+            border-radius: 14px;
+            padding: 14px 15px 12px;
+            min-height: 96px;
+            box-shadow: 0 10px 24px rgba(39, 19, 8, 0.04);
+            margin-bottom: 10px;
+        }
+        .hall-stat-title {
+            color: #6b7280;
+            font-size: 0.84rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .hall-stat-value {
+            color: #1f2330;
+            font-size: 1.65rem;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 7px;
+        }
+        .hall-stat-caption {
+            color: #5a6170;
+            font-size: 0.85rem;
+            line-height: 1.35;
         }
         @media (max-width: 900px) {
             .radar-grid {
