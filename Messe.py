@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-country-intelligence-v21"
+APP_BUILD = "2026-04-27-focus-countries-v22"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2435,6 +2435,26 @@ def country_summary(df: pd.DataFrame, row_label: str = "lead_rows") -> pd.DataFr
     return grouped.sort_values([row_label, "country"], ascending=[False, True])
 
 
+def _country_focus_mask(series: pd.Series, country_key: str) -> pd.Series:
+    normalized = series.fillna("").astype(str).str.strip().str.lower()
+    if country_key == "germany":
+        patterns = ["germany", "deutschland", "federal republic of germany"]
+    elif country_key == "china":
+        patterns = ["china", "pr china", "people's republic of china", "people s republic of china", "p.r. china"]
+    else:
+        patterns = [country_key.lower()]
+    mask = pd.Series(False, index=series.index)
+    for pattern in patterns:
+        mask = mask | normalized.str.contains(re.escape(pattern), regex=True)
+    return mask
+
+
+def _focus_country_rows(df: pd.DataFrame, country_key: str) -> pd.DataFrame:
+    if df.empty or "country" not in df.columns:
+        return df.head(0)
+    return df[_country_focus_mask(df["country"], country_key)].copy()
+
+
 def build_excel_download(all_df: pd.DataFrame) -> bytes:
     output = BytesIO()
     skm_df = sort_leads_by_hall(skm_leads(all_df))
@@ -2443,11 +2463,15 @@ def build_excel_download(all_df: pd.DataFrame) -> bytes:
     summary_df = hall_summary(skm_df)
     skm_country_df = country_summary(skm_df, row_label="skm_rows")
     all_country_df = country_summary(all_sorted, row_label="lead_rows")
+    germany_skm_df = order_columns(sort_leads_by_hall(_focus_country_rows(skm_df, "germany")))
+    china_skm_df = order_columns(sort_leads_by_hall(_focus_country_rows(skm_df, "china")))
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         summary_df.to_excel(writer, sheet_name="SKM by Hall", index=False)
         skm_country_df.to_excel(writer, sheet_name="SKM by Country", index=False)
         all_country_df.to_excel(writer, sheet_name="All by Country", index=False)
+        germany_skm_df.to_excel(writer, sheet_name="Germany SKM Leads", index=False)
+        china_skm_df.to_excel(writer, sheet_name="China SKM Leads", index=False)
         order_columns(skm_df).to_excel(writer, sheet_name="SKM Exhibitor Leads", index=False)
         if not review_df.empty:
             order_columns(review_df).to_excel(writer, sheet_name="Possible Matches", index=False)
@@ -2794,6 +2818,25 @@ def _render_country_priority_strip(summary_df: pd.DataFrame, row_label: str) -> 
     )
 
 
+def _render_focus_country_card(title: str, skm_rows_df: pd.DataFrame, all_rows_df: pd.DataFrame) -> None:
+    skm_count = len(skm_rows_df)
+    all_count = len(all_rows_df)
+    hall_count = 0
+    if not all_rows_df.empty and "hall" in all_rows_df.columns:
+        hall_count = int(all_rows_df["hall"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+
+    st.markdown(
+        f"""
+        <div class="summary-ribbon-card">
+            <div class="summary-ribbon-title">{title}</div>
+            <div class="summary-ribbon-value">{skm_count}</div>
+            <div class="summary-ribbon-caption">SKM rows | {all_count} all leads | {hall_count} hall(s)</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
     if df.empty:
         st.info(empty_message)
@@ -2979,15 +3022,58 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
     _render_section_header("Country Intelligence", "Source Country Breakdown", "Classify exhibitors by source country so you can see where the fair supply base is concentrated.")
     skm_country_df = country_summary(skm_df, row_label="skm_rows")
     all_country_df = country_summary(all_df, row_label="lead_rows")
+    germany_skm = sort_leads_by_hall(_focus_country_rows(skm_df, "germany"))
+    china_skm = sort_leads_by_hall(_focus_country_rows(skm_df, "china"))
+    germany_all = sort_leads_by_hall(_focus_country_rows(all_df, "germany"))
+    china_all = sort_leads_by_hall(_focus_country_rows(all_df, "china"))
+
+    focus_cols = st.columns(2)
+    with focus_cols[0]:
+        _render_focus_country_card("Germany Focus", germany_skm, germany_all)
+    with focus_cols[1]:
+        _render_focus_country_card("China Focus", china_skm, china_all)
+
     _render_country_priority_strip(skm_country_df if not skm_country_df.empty else all_country_df, "skm_rows" if not skm_country_df.empty else "lead_rows")
 
-    country_tabs = st.tabs(["SKM by Country", "All Leads by Country"])
+    country_tabs = st.tabs(["Germany", "China", "SKM by Country", "All Leads by Country"])
     with country_tabs[0]:
+        _render_section_header("Focus Country", "Germany", "Priority and total lead coverage for German exhibitors.")
+        if germany_skm.empty and germany_all.empty:
+            st.info("No Germany-based exhibitors found for this fair.")
+        else:
+            focus_subtabs = st.tabs(["Germany SKM Leads", "Germany All Leads"])
+            with focus_subtabs[0]:
+                if germany_skm.empty:
+                    st.info("No Germany-based SKM leads found for this fair.")
+                else:
+                    st.dataframe(order_columns(germany_skm), use_container_width=True, hide_index=True)
+            with focus_subtabs[1]:
+                if germany_all.empty:
+                    st.info("No Germany-based exhibitors found for this fair.")
+                else:
+                    st.dataframe(order_columns(germany_all), use_container_width=True, hide_index=True)
+    with country_tabs[1]:
+        _render_section_header("Focus Country", "China", "Priority and total lead coverage for China-based exhibitors.")
+        if china_skm.empty and china_all.empty:
+            st.info("No China-based exhibitors found for this fair.")
+        else:
+            focus_subtabs = st.tabs(["China SKM Leads", "China All Leads"])
+            with focus_subtabs[0]:
+                if china_skm.empty:
+                    st.info("No China-based SKM leads found for this fair.")
+                else:
+                    st.dataframe(order_columns(china_skm), use_container_width=True, hide_index=True)
+            with focus_subtabs[1]:
+                if china_all.empty:
+                    st.info("No China-based exhibitors found for this fair.")
+                else:
+                    st.dataframe(order_columns(china_all), use_container_width=True, hide_index=True)
+    with country_tabs[2]:
         if skm_country_df.empty:
             st.info("No SKM country data found for this fair.")
         else:
             st.dataframe(skm_country_df, use_container_width=True, hide_index=True)
-    with country_tabs[1]:
+    with country_tabs[3]:
         if all_country_df.empty:
             st.info("No country data found for this fair.")
         else:
