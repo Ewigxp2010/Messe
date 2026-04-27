@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-generic-directory-adapters-v11"
+APP_BUILD = "2026-04-27-auto-strategy-engine-v12"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -53,6 +53,23 @@ SITEMAP_DETAIL_HINTS = (
     "/profile/",
     "/brands/",
     "/brand/",
+)
+
+JUNK_NAME_HINTS = (
+    "navigation",
+    "footer",
+    "faq",
+    "english",
+    "german",
+    "companies",
+    "kontakt",
+    "contact",
+    "impressum",
+    "privacy",
+    "cookie",
+    "events",
+    "profile der",
+    "mehr informationen",
 )
 
 # =========================
@@ -703,14 +720,17 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
     site_specific_rows = _try_site_specific_exhibitor_fetch(config)
     if site_specific_rows is not None:
         rows = _dedupe_exhibitors(site_specific_rows)
-        if config.crawl_detail_pages:
-            rows = enrich_from_detail_pages(rows, config)
-        return rows
+        if _should_accept_scrape_result(rows, "", config, strategy_name="site adapter"):
+            if config.crawl_detail_pages:
+                rows = enrich_from_detail_pages(rows, config)
+            return rows
+        LAST_SCRAPE_WARNINGS.append("Site adapter result looked incomplete; continued with fallback strategies")
 
     urls = _build_page_urls(config)
     all_rows: List[Dict[str, Any]] = []
     seen_page_fingerprints = set()
     first_page_html = ""
+    structured_attempted = False
 
     for index, url in enumerate(urls):
         try:
@@ -741,6 +761,15 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
 
         if index == 0:
             first_page_html = html
+            structured_attempted = True
+            structured_rows = _try_embedded_directory_fetch(config, html)
+            if structured_rows:
+                structured_rows = _dedupe_exhibitors(structured_rows)
+                if _should_accept_scrape_result(structured_rows, html, config, strategy_name="embedded api"):
+                    if config.crawl_detail_pages:
+                        structured_rows = enrich_from_detail_pages(structured_rows, config)
+                    return structured_rows
+                LAST_SCRAPE_WARNINGS.append("Embedded API result looked incomplete; continued with HTML fallback")
 
         fingerprint = _page_fingerprint(html)
         if fingerprint in seen_page_fingerprints:
@@ -765,9 +794,79 @@ def scrape_exhibitors(config: ScrapeConfig) -> List[Dict[str, Any]]:
         sitemap_rows = _try_sitemap_profile_fetch(config)
         if sitemap_rows:
             rows = _dedupe_exhibitors(sitemap_rows)
+            if _should_accept_scrape_result(rows, first_page_html, config, strategy_name="sitemap profile") or structured_attempted:
+                if config.crawl_detail_pages:
+                    rows = enrich_from_detail_pages(rows, config)
+                return rows
     if config.crawl_detail_pages:
         rows = enrich_from_detail_pages(rows, config)
     return rows
+
+
+def _should_accept_scrape_result(
+    rows: Sequence[Dict[str, Any]], first_page_html: str, config: ScrapeConfig, strategy_name: str
+) -> bool:
+    metrics = _scrape_quality_metrics(rows)
+    row_count = metrics["rows"]
+    unique_exhibitors = metrics["unique_exhibitors"]
+    junk_ratio = metrics["junk_ratio"]
+    hall_ratio = metrics["hall_ratio"]
+    booth_ratio = metrics["booth_ratio"]
+
+    LAST_SCRAPE_WARNINGS.append(
+        f"{strategy_name.title()} quality check: {unique_exhibitors} exhibitors / {row_count} rows, "
+        f"hall coverage {hall_ratio:.0%}, booth coverage {booth_ratio:.0%}, junk {junk_ratio:.0%}"
+    )
+
+    if row_count == 0 or unique_exhibitors == 0:
+        return False
+    if junk_ratio >= 0.2:
+        return False
+    if first_page_html and _looks_like_client_rendered_directory(first_page_html) and unique_exhibitors < 50:
+        return False
+    if _is_likely_exhibitor_directory_url(config.url) and unique_exhibitors < 10:
+        return False
+    return True
+
+
+def _scrape_quality_metrics(rows: Sequence[Dict[str, Any]]) -> Dict[str, float]:
+    unique_exhibitors = set()
+    junk_count = 0
+    hall_count = 0
+    booth_count = 0
+
+    for row in rows:
+        exhibitor_key = (
+            _clean_text(row.get("exhibitor_uid"))
+            or _clean_text(row.get("detail_url"))
+            or normalize_company_name(row.get("exhibitor_name", ""))
+        )
+        if exhibitor_key:
+            unique_exhibitors.add(exhibitor_key)
+
+        name = _clean_text(row.get("exhibitor_name", "")).lower()
+        if any(token in name for token in JUNK_NAME_HINTS):
+            junk_count += 1
+        if _clean_text(row.get("hall")):
+            hall_count += 1
+        if _clean_text(row.get("booth")):
+            booth_count += 1
+
+    total_rows = len(rows)
+    return {
+        "rows": float(total_rows),
+        "unique_exhibitors": float(len(unique_exhibitors)),
+        "junk_ratio": (junk_count / total_rows) if total_rows else 0.0,
+        "hall_ratio": (hall_count / total_rows) if total_rows else 0.0,
+        "booth_ratio": (booth_count / total_rows) if total_rows else 0.0,
+    }
+
+
+def _try_embedded_directory_fetch(config: ScrapeConfig, first_page_html: str) -> Optional[List[Dict[str, Any]]]:
+    mf_config = _extract_messefrankfurt_directory_config(first_page_html)
+    if mf_config:
+        return _fetch_messefrankfurt_directory_exhibitors_from_config(config, mf_config)
+    return None
 
 
 def _try_site_specific_exhibitor_fetch(config: ScrapeConfig) -> Optional[List[Dict[str, Any]]]:
@@ -781,14 +880,6 @@ def _try_site_specific_exhibitor_fetch(config: ScrapeConfig) -> Optional[List[Di
         except Exception as exc:
             LAST_SCRAPE_WARNINGS.append(f"Interzoo fast path failed, fell back to HTML scraping: {exc}")
             return None
-
-    try:
-        mf_rows = _fetch_messefrankfurt_directory_exhibitors(config)
-        if mf_rows is not None:
-            return mf_rows
-    except Exception as exc:
-        LAST_SCRAPE_WARNINGS.append(f"Messe Frankfurt adapter failed, fell back to HTML scraping: {exc}")
-        return None
 
     return None
 
@@ -814,7 +905,7 @@ def _should_try_sitemap_profile_fallback(config: ScrapeConfig, first_page_html: 
     suspicious_names = 0
     for row in rows[:50]:
         name = _clean_text(row.get("exhibitor_name", "")).lower()
-        if any(token in name for token in ["navigation", "footer", "faq", "english", "german", "companies"]):
+        if any(token in name for token in JUNK_NAME_HINTS):
             suspicious_names += 1
     return row_count < 30 or suspicious_names >= max(3, row_count // 4)
 
@@ -860,6 +951,13 @@ def _fetch_messefrankfurt_directory_exhibitors(config: ScrapeConfig) -> Optional
     mf_config = _extract_messefrankfurt_directory_config(first_page_html)
     if not mf_config:
         return None
+
+    return _fetch_messefrankfurt_directory_exhibitors_from_config(config, mf_config)
+
+
+def _fetch_messefrankfurt_directory_exhibitors_from_config(
+    config: ScrapeConfig, mf_config: Dict[str, Any]
+) -> Optional[List[Dict[str, Any]]]:
 
     event_id = _clean_text(mf_config.get("API_EVENT_ID"))
     env = _clean_text(mf_config.get("ENV") or "prd").lower()
