@@ -26,7 +26,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-booth-board-v6"
+APP_BUILD = "2026-04-27-clean-booth-board-v7"
 
 # =========================
 # SKM matching
@@ -1956,30 +1956,26 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
                 match_status = str(record.get("match_status", "") or "").strip()
                 badge = "SKM" if match_status == "SKM Match" else "Lead"
                 location = f"{hall} / {booth}" if booth else hall
+                exhibitor_name = str(record.get("exhibitor_name", "") or "").strip()
 
-                links = []
-                if detail_url:
-                    links.append(f'<a href="{detail_url}" target="_blank">Detail</a>')
-                if website:
-                    links.append(f'<a href="{website}" target="_blank">Website</a>')
-                links_html = " · ".join(links) if links else "No external link"
-                area_html = f'<div class="booth-card-meta">Area: {show_area}</div>' if show_area else ""
+                with st.container(border=True):
+                    top_left, top_right = st.columns([1, 2])
+                    with top_left:
+                        st.caption(badge)
+                    with top_right:
+                        st.caption(location)
+                    st.markdown(f"**{exhibitor_name}**")
+                    st.caption(country)
+                    if show_area:
+                        st.caption(f"Area: {show_area}")
 
-                st.markdown(
-                    f"""
-                    <div class="booth-card">
-                        <div class="booth-card-top">
-                            <span class="booth-card-badge">{badge}</span>
-                            <span class="booth-card-location">{location}</span>
-                        </div>
-                        <div class="booth-card-title">{record.get("exhibitor_name", "")}</div>
-                        <div class="booth-card-meta">{country}</div>
-                        {area_html}
-                        <div class="booth-card-links">{links_html}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                    button_cols = st.columns(2)
+                    with button_cols[0]:
+                        if detail_url:
+                            st.link_button("Detail", detail_url, use_container_width=True)
+                    with button_cols[1]:
+                        if website:
+                            st.link_button("Website", website, use_container_width=True)
 
     if len(records) > rows_to_show:
         st.caption(f"Showing the first {rows_to_show} leads in card view. Use the table tabs for the full hall list.")
@@ -2113,19 +2109,19 @@ def _inject_app_css() -> None:
         <style>
         .stApp {
             background:
-                radial-gradient(circle at top right, rgba(255, 99, 71, 0.10), transparent 28%),
-                linear-gradient(180deg, #fffaf8 0%, #ffffff 28%, #ffffff 100%);
+                radial-gradient(circle at top right, rgba(255, 99, 71, 0.06), transparent 24%),
+                linear-gradient(180deg, #fffdfc 0%, #ffffff 24%, #ffffff 100%);
         }
         .block-container {
             padding-top: 2rem;
             max-width: 1240px;
         }
         .radar-hero {
-            background: linear-gradient(135deg, #ffffff 0%, #fff5f1 52%, #ffe4da 100%);
-            border: 1px solid rgba(242, 99, 71, 0.16);
+            background: linear-gradient(135deg, #ffffff 0%, #fff9f7 58%, #fff1eb 100%);
+            border: 1px solid rgba(242, 99, 71, 0.10);
             border-radius: 18px;
             padding: 28px 30px;
-            box-shadow: 0 20px 45px rgba(39, 19, 8, 0.08);
+            box-shadow: 0 14px 32px rgba(39, 19, 8, 0.05);
             margin-bottom: 18px;
         }
         .radar-eyebrow {
@@ -2199,12 +2195,12 @@ def _inject_app_css() -> None:
             color: #252833;
         }
         .hall-stat-card {
-            background: rgba(255, 255, 255, 0.88);
+            background: rgba(255, 255, 255, 0.94);
             border: 1px solid rgba(31, 35, 48, 0.08);
             border-radius: 14px;
             padding: 14px 15px 12px;
             min-height: 96px;
-            box-shadow: 0 10px 24px rgba(39, 19, 8, 0.04);
+            box-shadow: 0 8px 18px rgba(39, 19, 8, 0.03);
             margin-bottom: 10px;
         }
         .hall-stat-title {
@@ -2224,68 +2220,6 @@ def _inject_app_css() -> None:
             color: #5a6170;
             font-size: 0.85rem;
             line-height: 1.35;
-        }
-        .booth-card {
-            background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(255,248,244,0.98) 100%);
-            border: 1px solid rgba(31, 35, 48, 0.08);
-            border-radius: 14px;
-            padding: 14px 15px 13px;
-            min-height: 146px;
-            box-shadow: 0 10px 26px rgba(39, 19, 8, 0.05);
-            margin-bottom: 12px;
-        }
-        .booth-card-top {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-        .booth-card-badge {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 46px;
-            height: 24px;
-            padding: 0 10px;
-            border-radius: 999px;
-            background: rgba(242, 99, 71, 0.12);
-            color: #c54b32;
-            font-size: 0.78rem;
-            font-weight: 700;
-        }
-        .booth-card-location {
-            color: #4d5565;
-            font-size: 0.82rem;
-            font-weight: 600;
-            text-align: right;
-        }
-        .booth-card-title {
-            color: #1f2330;
-            font-size: 1rem;
-            font-weight: 700;
-            line-height: 1.35;
-            margin-bottom: 8px;
-        }
-        .booth-card-meta {
-            color: #5a6170;
-            font-size: 0.87rem;
-            line-height: 1.4;
-            margin-bottom: 6px;
-        }
-        .booth-card-links {
-            color: #c54b32;
-            font-size: 0.84rem;
-            line-height: 1.4;
-            margin-top: 10px;
-        }
-        .booth-card-links a {
-            color: #c54b32;
-            text-decoration: none;
-            font-weight: 600;
-        }
-        .booth-card-links a:hover {
-            text-decoration: underline;
         }
         @media (max-width: 900px) {
             .radar-grid {
