@@ -26,7 +26,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-interzoo-country-buckets-v4"
+APP_BUILD = "2026-04-27-onboarding-ui-v5"
 
 # =========================
 # SKM matching
@@ -1982,13 +1982,167 @@ def _render_results(result_df: pd.DataFrame) -> None:
         st.dataframe(order_columns(sort_leads_by_hall(result_df)), use_container_width=True, hide_index=True)
 
 
-def main() -> None:
-    st.title("TikTok Shop SKM Exhibition Radar")
-    st.caption(
-        "Upload your Strategic Key Merchant list, enter an exhibitor directory URL, "
-        "and identify priority merchants with hall and booth information."
+def _inject_app_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background:
+                radial-gradient(circle at top right, rgba(255, 99, 71, 0.10), transparent 28%),
+                linear-gradient(180deg, #fffaf8 0%, #ffffff 28%, #ffffff 100%);
+        }
+        .block-container {
+            padding-top: 2rem;
+            max-width: 1240px;
+        }
+        .radar-hero {
+            background: linear-gradient(135deg, #ffffff 0%, #fff5f1 52%, #ffe4da 100%);
+            border: 1px solid rgba(242, 99, 71, 0.16);
+            border-radius: 18px;
+            padding: 28px 30px;
+            box-shadow: 0 20px 45px rgba(39, 19, 8, 0.08);
+            margin-bottom: 18px;
+        }
+        .radar-eyebrow {
+            display: inline-block;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #c54b32;
+            background: rgba(255, 120, 84, 0.12);
+            border-radius: 999px;
+            padding: 6px 10px;
+            margin-bottom: 14px;
+        }
+        .radar-hero h1 {
+            margin: 0 0 10px 0;
+            color: #1f2330;
+            font-size: 2.25rem;
+            line-height: 1.05;
+        }
+        .radar-hero p {
+            margin: 0;
+            max-width: 860px;
+            color: #4d5565;
+            font-size: 1.02rem;
+            line-height: 1.55;
+        }
+        .radar-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+            margin: 16px 0 10px 0;
+        }
+        .radar-card {
+            background: rgba(255, 255, 255, 0.82);
+            border: 1px solid rgba(31, 35, 48, 0.08);
+            border-radius: 14px;
+            padding: 16px 16px 14px;
+            min-height: 130px;
+        }
+        .radar-card h3 {
+            margin: 0 0 10px 0;
+            font-size: 1rem;
+            color: #252833;
+        }
+        .radar-card p,
+        .radar-card li {
+            color: #5a6170;
+            font-size: 0.94rem;
+            line-height: 1.45;
+            margin: 0;
+        }
+        .radar-card ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+        .radar-card li + li {
+            margin-top: 6px;
+        }
+        .radar-note {
+            margin-top: 10px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(242, 99, 71, 0.14);
+            color: #4d5565;
+            font-size: 0.93rem;
+            line-height: 1.45;
+        }
+        .radar-note strong {
+            color: #252833;
+        }
+        @media (max-width: 900px) {
+            .radar-grid {
+                grid-template-columns: 1fr;
+            }
+            .radar-hero {
+                padding: 22px 18px;
+            }
+            .radar-hero h1 {
+                font-size: 1.85rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
-    st.caption(f"Build: {APP_BUILD}")
+
+
+def _render_onboarding(has_builtin_skm: bool) -> None:
+    built_in_copy = (
+        "The built-in SKM base is already loaded by default, so most runs only need an exhibitor URL."
+        if has_builtin_skm
+        else "If the built-in SKM base is unavailable, upload an SKM Excel or CSV file first."
+    )
+    st.markdown(
+        f"""
+        <section class="radar-hero">
+            <div class="radar-eyebrow">Product Guide</div>
+            <h1>TikTok Shop SKM Exhibition Radar</h1>
+            <p>
+                Find which strategic merchants are attending a fair, where they sit by hall and booth,
+                and export a working lead list for field招商. {built_in_copy}
+            </p>
+            <div class="radar-grid">
+                <div class="radar-card">
+                    <h3>What You Need</h3>
+                    <ul>
+                        <li>Paste the exhibitor directory URL from the fair website.</li>
+                        <li>Keep the built-in SKM base turned on unless you intentionally want a different list.</li>
+                        <li>Use uploaded HTML only as a fallback for JavaScript-heavy pages.</li>
+                    </ul>
+                </div>
+                <div class="radar-card">
+                    <h3>Recommended Flow</h3>
+                    <ul>
+                        <li>Open a fair directory URL and click <strong>Scrape and Match</strong>.</li>
+                        <li>Review <strong>Hall Map</strong> first to see where SKM density is highest.</li>
+                        <li>Download Excel when you need a field-ready lead list by hall.</li>
+                    </ul>
+                </div>
+                <div class="radar-card">
+                    <h3>Before You Worry</h3>
+                    <ul>
+                        <li>Some fairs finish in seconds, others take longer because they split data across many buckets.</li>
+                        <li>Please wait patiently while the app scrapes and matches; a longer fair run can still be normal.</li>
+                        <li>Use the scrape warnings panel as a quick health check after the run.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="radar-note">
+                <strong>Tip:</strong> If a site feels unusually slow, keep the page open and let the run finish first.
+                This app caches successful results, so the same fair becomes much faster on the next run.
+            </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def main() -> None:
+    _inject_app_css()
 
     with st.sidebar:
         st.header("1. SKM List")
@@ -2051,6 +2205,10 @@ def main() -> None:
             country_selector = st.text_input("Country selector", placeholder=".country")
             website_selector = st.text_input("Website selector", placeholder="a.website")
             detail_link_selector = st.text_input("Detail page link selector", placeholder="a.detail")
+
+        st.caption(f"Build: {APP_BUILD}")
+
+    _render_onboarding(has_builtin_skm)
 
     left, right = st.columns([2, 1])
     with left:
