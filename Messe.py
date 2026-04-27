@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import html
 import math
 import re
 import time
@@ -28,7 +29,19 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-generic-sitemap-fallback-v10"
+APP_BUILD = "2026-04-27-generic-directory-adapters-v11"
+
+MESSE_FRANKFURT_API_BASES = {
+    "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
+    "tst": "https://api-test.messefrankfurt.com/service/esb_api",
+    "prd": "https://api.messefrankfurt.com/service/esb_api",
+}
+
+MESSE_FRANKFURT_PUBLIC_API_KEYS = {
+    "dev": "jBv3VMiEinag4bCGVCMockK2m9lcbs74BhnFprCq",
+    "tst": "ZEmE2V/a8W0FOg6QfYOIdjy3jFU9oF2rPnSfPXu1z+p9XS6J",
+    "prd": "LXnMWcYQhipLAS7rImEzmZ3CkrU033FMha9cwVSngG4vbufTsAOCQQ==",
+}
 
 SITEMAP_DETAIL_HINTS = (
     "/exhprofiles/",
@@ -744,6 +757,14 @@ def _try_site_specific_exhibitor_fetch(config: ScrapeConfig) -> Optional[List[Di
             LAST_SCRAPE_WARNINGS.append(f"Interzoo fast path failed, fell back to HTML scraping: {exc}")
             return None
 
+    try:
+        mf_rows = _fetch_messefrankfurt_directory_exhibitors(config)
+        if mf_rows is not None:
+            return mf_rows
+    except Exception as exc:
+        LAST_SCRAPE_WARNINGS.append(f"Messe Frankfurt adapter failed, fell back to HTML scraping: {exc}")
+        return None
+
     return None
 
 
@@ -753,7 +774,7 @@ def _should_try_sitemap_profile_fallback(config: ScrapeConfig, first_page_html: 
     host = parsed.netloc.lower()
     row_count = len(rows)
 
-    if any(token in host for token in ["interzoo.com"]):
+    if any(token in host for token in ["interzoo.com", "messefrankfurt.com"]):
         return False
 
     if row_count == 0:
@@ -807,6 +828,252 @@ def _fetch_interzoo_algolia_exhibitors(config: ScrapeConfig) -> List[Dict[str, A
         f"Used Interzoo structured search API for faster scraping across {len(countries)} country bucket(s)"
     )
     return rows
+
+
+def _fetch_messefrankfurt_directory_exhibitors(config: ScrapeConfig) -> Optional[List[Dict[str, Any]]]:
+    first_page_html = fetch_html_with_retry(config.url, config, retries=2)
+    mf_config = _extract_messefrankfurt_directory_config(first_page_html)
+    if not mf_config:
+        return None
+
+    event_id = _clean_text(mf_config.get("API_EVENT_ID"))
+    env = _clean_text(mf_config.get("ENV") or "prd").lower()
+    language = _clean_text(mf_config.get("LANGUAGE") or "de-DE")
+    if not event_id:
+        return None
+
+    api_base = MESSE_FRANKFURT_API_BASES.get(env, MESSE_FRANKFURT_API_BASES["prd"])
+    api_key = MESSE_FRANKFURT_PUBLIC_API_KEYS.get(env, MESSE_FRANKFURT_PUBLIC_API_KEYS["prd"])
+    search_url = f"{api_base}/exhibitor-service/api/2.1/public/exhibitor/search"
+    page_size = 90
+
+    params = {
+        "language": language,
+        "q": "",
+        "orderBy": "name",
+        "pageNumber": 1,
+        "pageSize": page_size,
+        "showJumpLabels": "true",
+        "findEventVariable": event_id,
+        "orSearchFallback": "false",
+    }
+    headers = {"apikey": api_key, "User-Agent": config.user_agent}
+
+    response = requests.get(search_url, params=params, headers=headers, timeout=config.timeout_seconds)
+    response.raise_for_status()
+    payload = response.json()
+    if not payload.get("success"):
+        raise ScrapeError(f"Messe Frankfurt search API returned unsuccessful response for {event_id}")
+
+    result = payload.get("result") or {}
+    meta = result.get("metaData") or {}
+    total_hits = int(meta.get("hitsTotal") or 0)
+    if total_hits <= 0:
+        return []
+
+    total_pages = max(1, math.ceil(total_hits / page_size))
+    total_pages = min(total_pages, max(1, int(config.max_pages)))
+    rows: List[Dict[str, Any]] = []
+
+    rows.extend(_messefrankfurt_rows_from_hits(result.get("hits") or [], config.url, mf_config))
+
+    for page_number in range(2, total_pages + 1):
+        params["pageNumber"] = page_number
+        response = requests.get(search_url, params=params, headers=headers, timeout=config.timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("success"):
+            LAST_SCRAPE_WARNINGS.append(
+                f"Messe Frankfurt page {page_number} returned unsuccessful response and was skipped"
+            )
+            continue
+
+        page_hits = (payload.get("result") or {}).get("hits") or []
+        rows.extend(_messefrankfurt_rows_from_hits(page_hits, config.url, mf_config))
+
+        if config.request_delay_seconds:
+            time.sleep(min(config.request_delay_seconds, 0.15))
+
+    LAST_SCRAPE_WARNINGS.append(
+        f"Used Messe Frankfurt exhibitor API for {event_id} across {total_pages} page(s); "
+        f"{total_hits} exhibitors expanded into {len(rows)} hall/booth row(s)"
+    )
+    return rows
+
+
+def _extract_messefrankfurt_directory_config(html_text: str) -> Optional[Dict[str, Any]]:
+    BeautifulSoup = _require_bs4()
+    soup = BeautifulSoup(html_text, "html.parser")
+    root = soup.select_one("#mf-ex-root[data-config]") or soup.select_one("[data-config][id='mf-ex-root']")
+    if not root:
+        return None
+
+    raw_config = root.get("data-config") or ""
+    raw_config = html.unescape(raw_config)
+    if not raw_config:
+        return None
+
+    try:
+        data = json.loads(raw_config)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    api_url = _clean_text(data.get("API_URL"))
+    if "messefrankfurt" not in api_url and "exhibitorsearch" not in api_url:
+        return None
+
+    return data
+
+
+def _messefrankfurt_rows_from_hits(
+    hits: Sequence[Dict[str, Any]], source_url: str, mf_config: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for hit in hits:
+        rows.extend(_messefrankfurt_rows_from_hit(hit, source_url, mf_config))
+    return rows
+
+
+def _messefrankfurt_rows_from_hit(
+    hit: Dict[str, Any], source_url: str, mf_config: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    exhibitor = hit.get("exhibitor") or {}
+    if not isinstance(exhibitor, dict):
+        return []
+
+    name = _clean_text(exhibitor.get("name"))
+    if not name:
+        return []
+
+    country = _clean_text(((exhibitor.get("address") or {}).get("country") or {}).get("label"))
+    detail_url = _build_messefrankfurt_detail_url(exhibitor, source_url, mf_config)
+    website = _extract_messefrankfurt_website(exhibitor, source_url)
+    show_area = _clean_text(exhibitor.get("shortDescription") or "")
+    halls = ((exhibitor.get("exhibition") or {}).get("exhibitionHall")) or []
+
+    if not halls:
+        row = _make_row(
+            name=name,
+            hall="",
+            booth="",
+            country=country,
+            website=website,
+            detail_url=detail_url,
+            source_url=source_url,
+            raw_text=name,
+            method="messefrankfurt_es_api",
+        )
+        if show_area:
+            row["show_area"] = show_area
+        return [row] if _is_valid_exhibitor(row) else []
+
+    rows: List[Dict[str, Any]] = []
+    for hall_info in halls:
+        hall_name = _messefrankfurt_hall_name(hall_info)
+        stands = (hall_info or {}).get("stand") or []
+
+        if not stands:
+            row = _make_row(
+                name=name,
+                hall=hall_name,
+                booth="",
+                country=country,
+                website=website,
+                detail_url=detail_url,
+                source_url=source_url,
+                raw_text=f"{name} {hall_name} {country}",
+                method="messefrankfurt_es_api",
+            )
+            if show_area:
+                row["show_area"] = show_area
+            if _is_valid_exhibitor(row):
+                rows.append(row)
+            continue
+
+        for stand in stands:
+            booth = _clean_text((stand or {}).get("name"))
+            row = _make_row(
+                name=name,
+                hall=hall_name,
+                booth=booth,
+                country=country,
+                website=website,
+                detail_url=detail_url,
+                source_url=source_url,
+                raw_text=f"{name} {hall_name} {booth} {country}",
+                method="messefrankfurt_es_api",
+            )
+            if show_area:
+                row["show_area"] = show_area
+            if _is_valid_exhibitor(row):
+                rows.append(row)
+
+    return rows
+
+
+def _messefrankfurt_hall_name(hall_info: Dict[str, Any]) -> str:
+    if not isinstance(hall_info, dict):
+        return ""
+
+    category = _clean_text(
+        ((((hall_info.get("categoryLabel") or {}).get("labels") or {}).get("de-DE") or {}).get("text"))
+        or ((((hall_info.get("categoryLabel") or {}).get("labels") or {}).get("en-GB") or {}).get("text"))
+    )
+    name = _clean_text(
+        ((((hall_info.get("nameLabel") or {}).get("labels") or {}).get("de-DE") or {}).get("text"))
+        or ((((hall_info.get("nameLabel") or {}).get("labels") or {}).get("en-GB") or {}).get("text"))
+        or hall_info.get("name")
+    )
+
+    if category and name and category.lower() not in name.lower():
+        return f"{category} {name}"
+    return name or category
+
+
+def _extract_messefrankfurt_website(exhibitor: Dict[str, Any], source_url: str) -> str:
+    source_host = urlparse(source_url).netloc.lower()
+    candidates: List[str] = []
+
+    href = _clean_text(exhibitor.get("href"))
+    if href:
+        candidates.append(href)
+
+    for synonym in ((exhibitor.get("exhibition") or {}).get("synonyme") or []):
+        homepage = _clean_text((synonym or {}).get("homepage"))
+        if homepage:
+            candidates.append(homepage)
+
+    for candidate in candidates:
+        normalized = candidate
+        if normalized and not normalized.startswith(("http://", "https://")) and "." in normalized:
+            normalized = f"https://{normalized}"
+        parsed = urlparse(normalized)
+        if parsed.netloc and parsed.netloc.lower() != source_host and "messefrankfurt.com" not in parsed.netloc.lower():
+            return normalized
+
+    return ""
+
+
+def _build_messefrankfurt_detail_url(
+    exhibitor: Dict[str, Any], source_url: str, mf_config: Dict[str, Any]
+) -> str:
+    rewrite_id = _clean_text(exhibitor.get("rewriteId"))
+    if not rewrite_id:
+        return ""
+
+    route_template = _clean_text(((mf_config.get("ROUTES") or {}).get("DETAIL_EXHIBITOR")) or "")
+    base_path = _clean_text(mf_config.get("BASE_PATH") or "")
+    if not route_template:
+        return ""
+
+    relative = route_template.replace(":rewriteId", rewrite_id)
+    relative = f"{base_path.rstrip('/')}/{relative.lstrip('/')}"
+    parsed = urlparse(source_url)
+    root_url = f"{parsed.scheme or 'https'}://{parsed.netloc}"
+    return urljoin(root_url, relative)
 
 
 def _try_sitemap_profile_fetch(config: ScrapeConfig) -> Optional[List[Dict[str, Any]]]:
