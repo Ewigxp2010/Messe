@@ -26,7 +26,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-refined-dashboard-v8"
+APP_BUILD = "2026-04-27-professional-dashboard-v9"
 
 # =========================
 # SKM matching
@@ -1936,6 +1936,20 @@ def _render_hall_snapshot_card(title: str, value: int, caption: str) -> None:
     )
 
 
+def _render_section_header(eyebrow: str, title: str, description: str = "") -> None:
+    description_html = f'<div class="section-description">{description}</div>' if description else ""
+    st.markdown(
+        f"""
+        <div class="section-header">
+            <div class="section-eyebrow">{eyebrow}</div>
+            <div class="section-title">{title}</div>
+            {description_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
     if df.empty:
         st.info(empty_message)
@@ -2025,7 +2039,7 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
 
 
 def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> None:
-    st.subheader("SKM Hall Heatmap")
+    _render_section_header("Hall Intelligence", "SKM Hall Heatmap", "See where SKM density is concentrated, then drill into one hall at a time.")
     if skm_df.empty:
         st.info("No SKM exhibitor leads found yet.")
         return
@@ -2073,15 +2087,32 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> None:
 
 def _render_results(result_df: pd.DataFrame) -> None:
     summary = summarize_matches(_safe_records(result_df))
+    _render_section_header("Overview", "Exhibition Lead Summary", "A clean view of total coverage, priority merchants, and export actions.")
     metric_cols = st.columns(3)
     metric_cols[0].metric("Total Exhibitors", summary["total"])
     metric_cols[1].metric("SKM Exhibitor Leads", summary["skm_matches"])
     metric_cols[2].metric("Needs Review", summary["review"])
 
-    _render_downloads(result_df)
+    action_left, action_right = st.columns([1.2, 1])
+    with action_left:
+        _render_downloads(result_df)
+    with action_right:
+        st.markdown(
+            """
+            <div class="dashboard-note">
+                <div class="dashboard-note-title">Working Mode</div>
+                <div class="dashboard-note-body">
+                    Start with hall concentration, then move into booth-level follow-up.
+                    Use the exports when you need an offline lead sheet for the floor.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     skm_df = sort_leads_by_hall(skm_leads(result_df))
     review_df = sort_leads_by_hall(review_leads(result_df))
+    all_sorted = sort_leads_by_hall(result_df)
 
     tabs = ["Hall Map", "SKM Exhibitor Leads", "All Exhibitor Leads"]
     if not review_df.empty:
@@ -2091,8 +2122,9 @@ def _render_results(result_df: pd.DataFrame) -> None:
     tab_skm = rendered_tabs[1]
     tab_all = rendered_tabs[-1]
     with tab_map:
-        _render_hall_map(skm_df, sort_leads_by_hall(result_df))
+        _render_hall_map(skm_df, all_sorted)
     with tab_skm:
+        _render_section_header("Priority Leads", "SKM Exhibitor Leads", "High-confidence SKM matches across the full fair.")
         st.dataframe(
             order_columns(skm_df),
             use_container_width=True,
@@ -2100,10 +2132,12 @@ def _render_results(result_df: pd.DataFrame) -> None:
         )
     if not review_df.empty:
         with rendered_tabs[2]:
+            _render_section_header("Review Queue", "Possible Matches", "Lower-confidence matches kept separate from the main SKM workflow.")
             st.caption("These are lower-confidence fuzzy matches. Use them only as a backup review list.")
             st.dataframe(order_columns(review_df), use_container_width=True, hide_index=True)
     with tab_all:
-        st.dataframe(order_columns(sort_leads_by_hall(result_df)), use_container_width=True, hide_index=True)
+        _render_section_header("Full Coverage", "All Exhibitor Leads", "The full fair lead list, ordered for browsing and export.")
+        st.dataframe(order_columns(all_sorted), use_container_width=True, hide_index=True)
 
 
 def _inject_app_css() -> None:
@@ -2116,7 +2150,7 @@ def _inject_app_css() -> None:
                 linear-gradient(180deg, #fffdfc 0%, #ffffff 24%, #ffffff 100%);
         }
         .block-container {
-            padding-top: 2rem;
+            padding-top: 1.6rem;
             max-width: 1240px;
         }
         div[data-testid="stMetric"] {
@@ -2146,54 +2180,54 @@ def _inject_app_css() -> None:
             padding: 8px 12px !important;
         }
         .radar-hero {
-            background: linear-gradient(135deg, #ffffff 0%, #fff9f7 58%, #fff1eb 100%);
-            border: 1px solid rgba(242, 99, 71, 0.10);
-            border-radius: 18px;
-            padding: 28px 30px;
-            box-shadow: 0 14px 32px rgba(39, 19, 8, 0.05);
-            margin-bottom: 18px;
+            background: linear-gradient(135deg, #ffffff 0%, #fffaf8 62%, #fff4ef 100%);
+            border: 1px solid rgba(31, 35, 48, 0.06);
+            border-radius: 16px;
+            padding: 24px 26px;
+            box-shadow: 0 10px 24px rgba(39, 19, 8, 0.035);
+            margin-bottom: 16px;
         }
         .radar-eyebrow {
             display: inline-block;
-            font-size: 0.8rem;
+            font-size: 0.76rem;
             font-weight: 700;
             letter-spacing: 0.04em;
             text-transform: uppercase;
-            color: #c54b32;
-            background: rgba(255, 120, 84, 0.12);
+            color: #a74a38;
+            background: rgba(167, 74, 56, 0.08);
             border-radius: 999px;
-            padding: 6px 10px;
-            margin-bottom: 14px;
+            padding: 5px 9px;
+            margin-bottom: 12px;
         }
         .radar-hero h1 {
-            margin: 0 0 10px 0;
+            margin: 0 0 8px 0;
             color: #1f2330;
-            font-size: 2.25rem;
-            line-height: 1.05;
+            font-size: 2.05rem;
+            line-height: 1.08;
         }
         .radar-hero p {
             margin: 0;
-            max-width: 860px;
+            max-width: 780px;
             color: #4d5565;
-            font-size: 1.02rem;
-            line-height: 1.55;
+            font-size: 0.98rem;
+            line-height: 1.5;
         }
         .radar-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 14px;
-            margin: 16px 0 10px 0;
+            gap: 12px;
+            margin: 14px 0 8px 0;
         }
         .radar-card {
             background: rgba(255, 255, 255, 0.90);
             border: 1px solid rgba(31, 35, 48, 0.06);
-            border-radius: 14px;
-            padding: 16px 16px 14px;
-            min-height: 130px;
+            border-radius: 12px;
+            padding: 14px 14px 12px;
+            min-height: 118px;
         }
         .radar-card h3 {
-            margin: 0 0 10px 0;
-            font-size: 1rem;
+            margin: 0 0 8px 0;
+            font-size: 0.96rem;
             color: #252833;
         }
         .radar-card p,
@@ -2211,24 +2245,66 @@ def _inject_app_css() -> None:
             margin-top: 6px;
         }
         .radar-note {
-            margin-top: 10px;
-            padding: 12px 14px;
+            margin-top: 8px;
+            padding: 11px 13px;
             border-radius: 12px;
-            background: rgba(255, 255, 255, 0.9);
-            border: 1px solid rgba(242, 99, 71, 0.14);
+            background: rgba(255, 255, 255, 0.94);
+            border: 1px solid rgba(31, 35, 48, 0.07);
             color: #4d5565;
-            font-size: 0.93rem;
+            font-size: 0.9rem;
             line-height: 1.45;
         }
         .radar-note strong {
             color: #252833;
         }
+        .section-header {
+            margin: 14px 0 10px 0;
+        }
+        .section-eyebrow {
+            color: #7b818f;
+            font-size: 0.76rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 4px;
+        }
+        .section-title {
+            color: #1f2330;
+            font-size: 1.15rem;
+            font-weight: 700;
+            line-height: 1.25;
+        }
+        .section-description {
+            color: #677081;
+            font-size: 0.9rem;
+            line-height: 1.45;
+            margin-top: 3px;
+        }
+        .dashboard-note {
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid rgba(31, 35, 48, 0.07);
+            border-radius: 14px;
+            padding: 16px 16px 14px;
+            min-height: 104px;
+            box-shadow: 0 8px 20px rgba(39, 19, 8, 0.03);
+        }
+        .dashboard-note-title {
+            color: #1f2330;
+            font-size: 0.96rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .dashboard-note-body {
+            color: #5d6575;
+            font-size: 0.9rem;
+            line-height: 1.45;
+        }
         .hall-stat-card {
             background: rgba(255, 255, 255, 0.94);
             border: 1px solid rgba(31, 35, 48, 0.08);
-            border-radius: 14px;
-            padding: 14px 15px 12px;
-            min-height: 96px;
+            border-radius: 12px;
+            padding: 13px 14px 11px;
+            min-height: 90px;
             box-shadow: 0 8px 18px rgba(39, 19, 8, 0.03);
             margin-bottom: 10px;
         }
@@ -2255,10 +2331,10 @@ def _inject_app_css() -> None:
                 grid-template-columns: 1fr;
             }
             .radar-hero {
-                padding: 22px 18px;
+                padding: 20px 16px;
             }
             .radar-hero h1 {
-                font-size: 1.85rem;
+                font-size: 1.72rem;
             }
         }
         </style>
@@ -2280,11 +2356,11 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
             <h1>TikTok Shop SKM Exhibition Radar</h1>
             <p>
                 Find which strategic merchants are attending a fair, where they sit by hall and booth,
-                and export a working lead list for field招商. {built_in_copy}
+                and export a clean lead sheet for field招商. {built_in_copy}
             </p>
             <div class="radar-grid">
                 <div class="radar-card">
-                    <h3>What You Need</h3>
+                    <h3>Input</h3>
                     <ul>
                         <li>Paste the exhibitor directory URL from the fair website.</li>
                         <li>Keep the built-in SKM base turned on unless you intentionally want a different list.</li>
@@ -2292,7 +2368,7 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
                     </ul>
                 </div>
                 <div class="radar-card">
-                    <h3>Recommended Flow</h3>
+                    <h3>Workflow</h3>
                     <ul>
                         <li>Open a fair directory URL and click <strong>Scrape and Match</strong>.</li>
                         <li>Review <strong>Hall Map</strong> first to see where SKM density is highest.</li>
@@ -2300,7 +2376,7 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
                     </ul>
                 </div>
                 <div class="radar-card">
-                    <h3>Before You Worry</h3>
+                    <h3>Runtime</h3>
                     <ul>
                         <li>Some fairs finish in seconds, others take longer because they split data across many buckets.</li>
                         <li>Please wait patiently while the app scrapes and matches; a longer fair run can still be normal.</li>
@@ -2309,8 +2385,8 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
                 </div>
             </div>
             <div class="radar-note">
-                <strong>Tip:</strong> If a site feels unusually slow, keep the page open and let the run finish first.
-                This app caches successful results, so the same fair becomes much faster on the next run.
+                <strong>Tip:</strong> Let the first run finish before retrying. Successful fair runs are cached,
+                so repeat analysis is much faster.
             </div>
         </section>
         """,
