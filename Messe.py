@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-focus-countries-v22"
+APP_BUILD = "2026-04-27-focus-countries-executive-v23"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2818,19 +2818,34 @@ def _render_country_priority_strip(summary_df: pd.DataFrame, row_label: str) -> 
     )
 
 
-def _render_focus_country_card(title: str, skm_rows_df: pd.DataFrame, all_rows_df: pd.DataFrame) -> None:
+def _render_focus_country_card(title: str, skm_rows_df: pd.DataFrame, all_rows_df: pd.DataFrame, total_skm_rows: int, total_all_rows: int) -> None:
     skm_count = len(skm_rows_df)
     all_count = len(all_rows_df)
     hall_count = 0
     if not all_rows_df.empty and "hall" in all_rows_df.columns:
         hall_count = int(all_rows_df["hall"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+    skm_share = (skm_count / total_skm_rows * 100) if total_skm_rows else 0.0
+    all_share = (all_count / total_all_rows * 100) if total_all_rows else 0.0
 
     st.markdown(
         f"""
-        <div class="summary-ribbon-card">
-            <div class="summary-ribbon-title">{title}</div>
-            <div class="summary-ribbon-value">{skm_count}</div>
-            <div class="summary-ribbon-caption">SKM rows | {all_count} all leads | {hall_count} hall(s)</div>
+        <div class="focus-country-card">
+            <div class="focus-country-topline">{title}</div>
+            <div class="focus-country-grid">
+                <div>
+                    <div class="focus-country-value">{skm_count}</div>
+                    <div class="focus-country-label">SKM rows</div>
+                </div>
+                <div>
+                    <div class="focus-country-value">{all_count}</div>
+                    <div class="focus-country-label">All leads</div>
+                </div>
+            </div>
+            <div class="focus-country-meta">
+                <span class="focus-country-chip">{hall_count} hall(s)</span>
+                <span class="focus-country-chip">{skm_share:.1f}% of SKM</span>
+                <span class="focus-country-chip">{all_share:.1f}% of all leads</span>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -3029,9 +3044,9 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
 
     focus_cols = st.columns(2)
     with focus_cols[0]:
-        _render_focus_country_card("Germany Focus", germany_skm, germany_all)
+        _render_focus_country_card("Germany Focus", germany_skm, germany_all, len(skm_df), len(all_df))
     with focus_cols[1]:
-        _render_focus_country_card("China Focus", china_skm, china_all)
+        _render_focus_country_card("China Focus", china_skm, china_all, len(skm_df), len(all_df))
 
     _render_country_priority_strip(skm_country_df if not skm_country_df.empty else all_country_df, "skm_rows" if not skm_country_df.empty else "lead_rows")
 
@@ -3459,6 +3474,64 @@ def _inject_app_css() -> None:
         }
         .summary-actions {
             margin: 10px 0 6px 0;
+        }
+        .focus-country-card {
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.99) 0%, rgba(252,247,245,0.98) 100%);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 18px;
+            padding: 16px 16px 14px;
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.04);
+            position: relative;
+            overflow: hidden;
+            min-height: 154px;
+        }
+        .focus-country-card::before {
+            content: "";
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 4px;
+            background: linear-gradient(180deg, #f25f45 0%, rgba(242, 95, 69, 0.22) 100%);
+        }
+        .focus-country-topline {
+            color: #1f2330;
+            font-size: 0.92rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        .focus-country-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .focus-country-value {
+            color: #1f2330;
+            font-size: 1.42rem;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+        .focus-country-label {
+            color: #6b7280;
+            font-size: 0.82rem;
+            line-height: 1.25;
+        }
+        .focus-country-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .focus-country-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 9px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.92);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            color: #566072;
+            font-size: 0.8rem;
+            line-height: 1;
         }
         .console-panel {
             background: rgba(255, 255, 255, 0.975);
