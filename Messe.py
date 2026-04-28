@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-brief-variants-v48"
+APP_BUILD = "2026-04-28-brief-top-signals-v49"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3815,10 +3815,12 @@ def _build_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) 
     hall_df = hall_summary(skm_df)
     if not hall_df.empty:
         top_hall = str(hall_df.iloc[0]["hall"])
+    top_halls_text = ", ".join([str(value) for value in hall_df.head(3)["hall"].tolist()]) if not hall_df.empty else "n/a"
 
     country_df = country_summary(skm_df, row_label="skm_rows")
     if not country_df.empty:
         top_country = str(country_df.iloc[0]["country"])
+    top_countries_text = ", ".join([str(value) for value in country_df.head(3)["country"].tolist()]) if not country_df.empty else "n/a"
 
     if "booth" in result_df.columns:
         booth_ready_rows = int(result_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
@@ -3834,7 +3836,8 @@ def _build_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) 
     return (
         f"{host}: {total_rows} lead rows captured, {len(skm_df)} SKM rows identified, "
         f"{len(review_df)} possible matches, capture mode {strategy}, top hall {top_hall}, "
-        f"top source country {top_country}, booth-ready rows {booth_ready_rows}, warnings {len(scrape_warnings)}."
+        f"top source country {top_country}, top halls [{top_halls_text}], top source countries [{top_countries_text}], "
+        f"booth-ready rows {booth_ready_rows}, warnings {len(scrape_warnings)}."
     )
 
 
@@ -3843,9 +3846,13 @@ def _build_short_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[
     skm_df = sort_leads_by_hall(skm_leads(result_df))
     strategy = _infer_run_strategy(result_df, scrape_warnings)
     top_hall = "n/a"
+    top_country = "n/a"
     hall_df = hall_summary(skm_df)
     if not hall_df.empty:
         top_hall = str(hall_df.iloc[0]["hall"])
+    country_df = country_summary(skm_df, row_label="skm_rows")
+    if not country_df.empty:
+        top_country = str(country_df.iloc[0]["country"])
 
     source_url = ""
     if "source_url" in result_df.columns:
@@ -3855,7 +3862,7 @@ def _build_short_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[
     host = re.sub(r"^www\.", "", host)
     host = host or "fair site"
 
-    return f"{host}: {total_rows} rows / {len(skm_df)} SKM / top hall {top_hall} / mode {strategy}."
+    return f"{host}: {total_rows} rows / {len(skm_df)} SKM / top hall {top_hall} / top country {top_country} / mode {strategy}."
 
 
 def _render_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> None:
