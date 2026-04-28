@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-navigation-counts-v43"
+APP_BUILD = "2026-04-28-current-scope-v44"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3215,6 +3215,11 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         hall_all_filtered,
         filters_active=bool(only_booth_ready_rows or hall_search_query.strip() or hall_focus_geography != "All markets"),
     )
+    _render_current_scope(
+        hall_all_filtered,
+        title="Current Hall Scope",
+        caption="A compact view of the lead coverage still visible inside this selected hall.",
+    )
     _render_filtered_downloads_with_context(
         hall_all_filtered,
         title="Hall Export",
@@ -3427,6 +3432,11 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 germany_all_filtered,
                 filters_active=bool(germany_booth_ready or germany_search_query.strip()),
             )
+            _render_current_scope(
+                germany_all_filtered,
+                title="Germany Scope",
+                caption="The current Germany slice after booth-ready and search filters are applied.",
+            )
             _render_filtered_downloads_with_context(
                 germany_all_filtered,
                 title="Germany Export",
@@ -3497,6 +3507,11 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 pd.DataFrame(),
                 china_all_filtered,
                 filters_active=bool(china_booth_ready or china_search_query.strip()),
+            )
+            _render_current_scope(
+                china_all_filtered,
+                title="China Scope",
+                caption="The current China slice after booth-ready and search filters are applied.",
             )
             _render_filtered_downloads_with_context(
                 china_all_filtered,
@@ -3620,6 +3635,56 @@ def _render_active_filter_chips(labels: Sequence[str]) -> None:
         return
     chips_html = "".join([f'<span class="country-chip">{html.escape(str(label))}</span>' for label in chips])
     st.markdown(f'<div class="country-chip-row country-chip-row-tight">{chips_html}</div>', unsafe_allow_html=True)
+
+
+def _render_current_scope(df: pd.DataFrame, title: str, caption: str) -> None:
+    hall_count = 0
+    booth_count = 0
+    country_count = 0
+    if not df.empty:
+        if "hall" in df.columns:
+            hall_count = int(df["hall"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+        if "booth" in df.columns:
+            booth_count = int(df["booth"].fillna("").astype(str).str.strip().ne("").sum())
+        if "country" in df.columns:
+            country_count = int(df["country"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+
+    st.markdown(
+        f"""
+        <div class="dashboard-note">
+            <div class="dashboard-note-title">{html.escape(title)}</div>
+            <div class="dashboard-note-body">{html.escape(caption)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="summary-ribbon summary-ribbon-compact">
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Visible Rows</div>
+                <div class="summary-ribbon-value">{len(df)}</div>
+                <div class="summary-ribbon-caption">Lead rows currently in the active operating slice.</div>
+            </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Visible Halls</div>
+                <div class="summary-ribbon-value">{hall_count}</div>
+                <div class="summary-ribbon-caption">Unique halls still covered by the current filtered view.</div>
+            </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Booth-ready Rows</div>
+                <div class="summary-ribbon-value">{booth_count}</div>
+                <div class="summary-ribbon-caption">Rows already resolved to booth-level operating detail.</div>
+            </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Visible Countries</div>
+                <div class="summary-ribbon-value">{country_count}</div>
+                <div class="summary-ribbon-caption">Source countries still represented in the active slice.</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_lead_dataframe(df: pd.DataFrame) -> None:
@@ -3758,6 +3823,11 @@ def _render_results(result_df: pd.DataFrame) -> None:
         filtered_review_df,
         filtered_all_df,
         filters_active=bool(only_with_booth or search_query.strip() or focus_geography != "All markets"),
+    )
+    _render_current_scope(
+        filtered_all_df,
+        title="Current Lead Scope",
+        caption="A quick coverage snapshot for the exact lead slice visible under the current table filters.",
     )
     _render_filtered_downloads(filtered_all_df)
     rendered_tabs = st.tabs(tabs)
