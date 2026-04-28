@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-field-brief-v47"
+APP_BUILD = "2026-04-28-brief-variants-v48"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3838,7 +3838,28 @@ def _build_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) 
     )
 
 
+def _build_short_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> str:
+    total_rows = len(result_df)
+    skm_df = sort_leads_by_hall(skm_leads(result_df))
+    strategy = _infer_run_strategy(result_df, scrape_warnings)
+    top_hall = "n/a"
+    hall_df = hall_summary(skm_df)
+    if not hall_df.empty:
+        top_hall = str(hall_df.iloc[0]["hall"])
+
+    source_url = ""
+    if "source_url" in result_df.columns:
+        source_values = [str(v).strip() for v in result_df["source_url"].fillna("").tolist() if str(v).strip()]
+        source_url = source_values[0] if source_values else ""
+    host = urlparse(source_url).netloc.lower()
+    host = re.sub(r"^www\.", "", host)
+    host = host or "fair site"
+
+    return f"{host}: {total_rows} rows / {len(skm_df)} SKM / top hall {top_hall} / mode {strategy}."
+
+
 def _render_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> None:
+    short_brief = _build_short_field_brief(result_df, scrape_warnings)
     brief_text = _build_field_brief(result_df, scrape_warnings)
     st.markdown(
         """
@@ -3851,7 +3872,11 @@ def _render_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str])
         """,
         unsafe_allow_html=True,
     )
-    st.text_area("Field Brief", value=brief_text, height=96, key="field-brief-text")
+    brief_tabs = st.tabs(["Short Brief", "Ops Brief"])
+    with brief_tabs[0]:
+        st.text_area("Short Brief", value=short_brief, height=72, key="field-brief-short")
+    with brief_tabs[1]:
+        st.text_area("Ops Brief", value=brief_text, height=96, key="field-brief-text")
 
 
 def _render_lead_dataframe(df: pd.DataFrame) -> None:
