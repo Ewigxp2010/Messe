@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-geography-filters-v33"
+APP_BUILD = "2026-04-28-hall-geography-focus-v34"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3082,13 +3082,20 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
             country_chips += f'<span class="country-chip country-chip-more">+{len(countries) - 10} more</span>'
         st.markdown(f'<div class="country-chip-row">{country_chips}</div>', unsafe_allow_html=True)
 
-    filter_left, filter_right = st.columns([1.4, 0.8])
+    filter_left, filter_middle, filter_right = st.columns([1.1, 0.9, 0.8])
     with filter_left:
         hall_search_query = st.text_input(
             "Search within selected hall",
             value="",
             placeholder="Search exhibitor, country, hall, booth, or area",
             key=f"hall-search-{hall}",
+        )
+    with filter_middle:
+        hall_focus_geography = st.selectbox(
+            "Hall geography focus",
+            ["All markets", "Germany", "China"],
+            index=0,
+            key=f"hall-geography-{hall}",
         )
     with filter_right:
         only_booth_ready_rows = st.checkbox(
@@ -3101,18 +3108,20 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         hall_skm,
         only_with_booth=only_booth_ready_rows,
         search_query=hall_search_query,
+        focus_geography=hall_focus_geography,
     )
     hall_all_filtered = _apply_lead_table_filters(
         hall_all,
         only_with_booth=only_booth_ready_rows,
         search_query=hall_search_query,
+        focus_geography=hall_focus_geography,
     )
 
     _render_filtered_live_counts(
         hall_skm_filtered,
         pd.DataFrame(),
         hall_all_filtered,
-        filters_active=bool(only_booth_ready_rows or hall_search_query.strip()),
+        filters_active=bool(only_booth_ready_rows or hall_search_query.strip() or hall_focus_geography != "All markets"),
     )
 
     hall_tabs = st.tabs(["SKM Booth Board", "All Leads Booth Board", "SKM Table", "All Leads Table"])
