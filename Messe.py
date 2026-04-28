@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-brief-top-signals-v49"
+APP_BUILD = "2026-04-28-export-briefs-v50"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2460,6 +2460,7 @@ def run_summary_frame(
     *,
     export_scope: str = "",
     active_filters: Optional[Sequence[str]] = None,
+    scrape_warnings: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
     total_rows = len(all_df)
     skm_df = skm_leads(all_df)
@@ -2495,6 +2496,9 @@ def run_summary_frame(
         rows.append({"metric": "Export Scope", "value": export_scope})
     if filter_labels:
         rows.append({"metric": "Active Filters", "value": " | ".join(filter_labels)})
+    warning_list = list(scrape_warnings or [])
+    rows.append({"metric": "Short Brief", "value": _build_short_field_brief(all_df, warning_list)})
+    rows.append({"metric": "Ops Brief", "value": _build_field_brief(all_df, warning_list)})
     return pd.DataFrame(rows)
 
 
@@ -2503,6 +2507,7 @@ def build_excel_download(
     *,
     export_scope: str = "",
     active_filters: Optional[Sequence[str]] = None,
+    scrape_warnings: Optional[Sequence[str]] = None,
 ) -> bytes:
     output = BytesIO()
     skm_df = sort_leads_by_hall(skm_leads(all_df))
@@ -2513,7 +2518,12 @@ def build_excel_download(
     all_country_df = country_summary(all_sorted, row_label="lead_rows")
     germany_skm_df = order_columns(sort_leads_by_hall(_focus_country_rows(skm_df, "germany")))
     china_skm_df = order_columns(sort_leads_by_hall(_focus_country_rows(skm_df, "china")))
-    run_summary_df = run_summary_frame(all_df, export_scope=export_scope, active_filters=active_filters)
+    run_summary_df = run_summary_frame(
+        all_df,
+        export_scope=export_scope,
+        active_filters=active_filters,
+        scrape_warnings=scrape_warnings,
+    )
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         run_summary_df.to_excel(writer, sheet_name="Run Summary", index=False)
@@ -2710,10 +2720,10 @@ def _export_file_stem(result_df: pd.DataFrame) -> str:
     return f"{host}_{run_date}"
 
 
-def _render_downloads(result_df: pd.DataFrame) -> None:
+def _render_downloads(result_df: pd.DataFrame, *, scrape_warnings: Optional[Sequence[str]] = None) -> None:
     ordered = order_columns(sort_leads_by_hall(result_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
-    excel_bytes = build_excel_download(ordered)
+    excel_bytes = build_excel_download(ordered, scrape_warnings=scrape_warnings)
     file_stem = _export_file_stem(ordered)
 
     dl1, dl2 = st.columns(2)
@@ -2740,10 +2750,16 @@ def _render_filtered_downloads(
     *,
     export_scope: str = "Filtered Lead Tables",
     active_filters: Optional[Sequence[str]] = None,
+    scrape_warnings: Optional[Sequence[str]] = None,
 ) -> None:
     ordered = order_columns(sort_leads_by_hall(filtered_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
-    excel_bytes = build_excel_download(ordered, export_scope=export_scope, active_filters=active_filters)
+    excel_bytes = build_excel_download(
+        ordered,
+        export_scope=export_scope,
+        active_filters=active_filters,
+        scrape_warnings=scrape_warnings,
+    )
     file_stem = _export_file_stem(ordered)
 
     st.markdown(
@@ -2785,10 +2801,16 @@ def _render_filtered_downloads_with_context(
     *,
     export_scope: str,
     active_filters: Optional[Sequence[str]] = None,
+    scrape_warnings: Optional[Sequence[str]] = None,
 ) -> None:
     ordered = order_columns(sort_leads_by_hall(filtered_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
-    excel_bytes = build_excel_download(ordered, export_scope=export_scope, active_filters=active_filters)
+    excel_bytes = build_excel_download(
+        ordered,
+        export_scope=export_scope,
+        active_filters=active_filters,
+        scrape_warnings=scrape_warnings,
+    )
     file_stem = _export_file_stem(ordered)
 
     st.markdown(
@@ -3254,6 +3276,7 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         stem_suffix="hall_filtered",
         export_scope=f"Selected Hall: {hall}",
         active_filters=hall_filter_labels,
+        scrape_warnings=None,
     )
 
     hall_tabs = st.tabs(
@@ -3472,6 +3495,7 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 stem_suffix="germany_filtered",
                 export_scope="Focus Country: Germany",
                 active_filters=germany_filter_labels,
+                scrape_warnings=None,
             )
             focus_subtabs = st.tabs(
                 [
@@ -3549,6 +3573,7 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 stem_suffix="china_filtered",
                 export_scope="Focus Country: China",
                 active_filters=china_filter_labels,
+                scrape_warnings=None,
             )
             focus_subtabs = st.tabs(
                 [
@@ -3951,7 +3976,7 @@ def _render_results(result_df: pd.DataFrame, scrape_warnings: Optional[Sequence[
     action_left, action_right = st.columns([1.2, 1])
     with action_left:
         st.markdown('<div class="summary-actions">', unsafe_allow_html=True)
-        _render_downloads(result_df)
+        _render_downloads(result_df, scrape_warnings=scrape_warnings)
         st.markdown("</div>", unsafe_allow_html=True)
     with action_right:
         st.markdown(
@@ -4034,6 +4059,7 @@ def _render_results(result_df: pd.DataFrame, scrape_warnings: Optional[Sequence[
         filtered_all_df,
         export_scope="Filtered Lead Tables",
         active_filters=lead_filter_labels,
+        scrape_warnings=scrape_warnings,
     )
     rendered_tabs = st.tabs(tabs)
     tab_skm = rendered_tabs[0]
