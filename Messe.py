@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-filtered-exports-v36"
+APP_BUILD = "2026-04-28-hall-filtered-exports-v37"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2757,6 +2757,43 @@ def _render_filtered_downloads(filtered_df: pd.DataFrame) -> None:
         )
 
 
+def _render_filtered_downloads_with_context(filtered_df: pd.DataFrame, title: str, body: str, stem_suffix: str) -> None:
+    ordered = order_columns(sort_leads_by_hall(filtered_df))
+    csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
+    excel_bytes = build_excel_download(ordered)
+    file_stem = _export_file_stem(ordered)
+
+    st.markdown(
+        f"""
+        <div class="dashboard-note">
+            <div class="dashboard-note-title">{html.escape(title)}</div>
+            <div class="dashboard-note-body">
+                {html.escape(body)}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    dl1, dl2 = st.columns(2)
+    with dl1:
+        st.download_button(
+            "Download Filtered Excel",
+            data=excel_bytes,
+            file_name=f"{file_stem}_{stem_suffix}_console.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    with dl2:
+        st.download_button(
+            "Download Filtered CSV",
+            data=csv_bytes,
+            file_name=f"{file_stem}_{stem_suffix}_leads.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+
 def _hall_filtered_rows(df: pd.DataFrame, hall: str) -> pd.DataFrame:
     if df.empty or "hall" not in df.columns:
         return df.head(0)
@@ -3159,6 +3196,12 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         pd.DataFrame(),
         hall_all_filtered,
         filters_active=bool(only_booth_ready_rows or hall_search_query.strip() or hall_focus_geography != "All markets"),
+    )
+    _render_filtered_downloads_with_context(
+        hall_all_filtered,
+        title="Hall Export",
+        body="Export the exact lead slice visible in the selected hall, including geography and booth-ready constraints.",
+        stem_suffix="hall_filtered",
     )
 
     hall_tabs = st.tabs(["SKM Booth Board", "All Leads Booth Board", "SKM Table", "All Leads Table"])
