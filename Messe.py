@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-export-filenames-v25"
+APP_BUILD = "2026-04-28-quick-filters-v26"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3163,6 +3163,24 @@ def _render_run_summary_panel(result_df: pd.DataFrame) -> None:
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
 
+def _apply_lead_table_filters(df: pd.DataFrame, *, only_with_booth: bool, search_query: str) -> pd.DataFrame:
+    working = df.copy()
+    if only_with_booth and "booth" in working.columns:
+        working = working[working["booth"].fillna("").astype(str).str.strip().ne("")]
+    query = search_query.strip().lower()
+    if query:
+        haystacks = []
+        for column in ["exhibitor_name", "country", "hall", "booth", "show_area"]:
+            if column in working.columns:
+                haystacks.append(working[column].fillna("").astype(str))
+        if haystacks:
+            merged = haystacks[0]
+            for series in haystacks[1:]:
+                merged = merged + " " + series
+            working = working[merged.str.lower().str.contains(re.escape(query), regex=True)]
+    return working
+
+
 def _render_results(result_df: pd.DataFrame) -> None:
     summary = summarize_matches(_safe_records(result_df))
     skm_df = sort_leads_by_hall(skm_leads(result_df))
@@ -3205,13 +3223,22 @@ def _render_results(result_df: pd.DataFrame) -> None:
     if not review_df.empty:
         tabs.insert(1, "Possible Matches")
     _render_section_header("Lead Tables", "Lead Sheets", "Use the structured tables when you need full-list review, filtering, or export checks.")
+    filter_left, filter_right = st.columns([0.8, 1.4])
+    with filter_left:
+        only_with_booth = st.checkbox("Only rows with booth", value=False)
+    with filter_right:
+        search_query = st.text_input("Search exhibitor, country, hall, booth, or area", value="", placeholder="Search within lead tables")
+
+    filtered_skm_df = _apply_lead_table_filters(skm_df, only_with_booth=only_with_booth, search_query=search_query)
+    filtered_review_df = _apply_lead_table_filters(review_df, only_with_booth=only_with_booth, search_query=search_query)
+    filtered_all_df = _apply_lead_table_filters(all_sorted, only_with_booth=only_with_booth, search_query=search_query)
     rendered_tabs = st.tabs(tabs)
     tab_skm = rendered_tabs[0]
     tab_all = rendered_tabs[-1]
     with tab_skm:
         _render_section_header("Priority Leads", "SKM Exhibitor Leads", "High-confidence SKM merchants, ready for booth-level follow-up.")
         st.dataframe(
-            order_columns(skm_df),
+            order_columns(filtered_skm_df),
             use_container_width=True,
             hide_index=True,
         )
@@ -3219,10 +3246,10 @@ def _render_results(result_df: pd.DataFrame) -> None:
         with rendered_tabs[1]:
             _render_section_header("Review Queue", "Possible Matches", "Lower-confidence matches separated from the main SKM operating list.")
             st.caption("These are lower-confidence fuzzy matches. Use them only as a backup review list.")
-            st.dataframe(order_columns(review_df), use_container_width=True, hide_index=True)
+            st.dataframe(order_columns(filtered_review_df), use_container_width=True, hide_index=True)
     with tab_all:
         _render_section_header("Full Coverage", "All Exhibitor Leads", "The complete fair lead list, ordered for review, filtering, and export.")
-        st.dataframe(order_columns(all_sorted), use_container_width=True, hide_index=True)
+        st.dataframe(order_columns(filtered_all_df), use_container_width=True, hide_index=True)
 
 
 def _inject_app_css() -> None:
