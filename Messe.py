@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-hall-filtered-exports-v37"
+APP_BUILD = "2026-04-28-country-filtered-exports-v38"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3358,6 +3358,12 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 germany_all_filtered,
                 filters_active=bool(germany_booth_ready or germany_search_query.strip()),
             )
+            _render_filtered_downloads_with_context(
+                germany_all_filtered,
+                title="Germany Export",
+                body="Export the exact Germany lead slice visible in this focus view, including booth-ready and search filters.",
+                stem_suffix="germany_filtered",
+            )
             focus_subtabs = st.tabs(["Germany SKM Leads", "Germany All Leads"])
             with focus_subtabs[0]:
                 if germany_skm_filtered.empty:
@@ -3401,6 +3407,12 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 pd.DataFrame(),
                 china_all_filtered,
                 filters_active=bool(china_booth_ready or china_search_query.strip()),
+            )
+            _render_filtered_downloads_with_context(
+                china_all_filtered,
+                title="China Export",
+                body="Export the exact China lead slice visible in this focus view, including booth-ready and search filters.",
+                stem_suffix="china_filtered",
             )
             focus_subtabs = st.tabs(["China SKM Leads", "China All Leads"])
             with focus_subtabs[0]:
