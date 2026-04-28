@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-filtered-live-counts-v31"
+APP_BUILD = "2026-04-28-hall-drilldown-filters-v32"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3082,25 +3082,58 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
             country_chips += f'<span class="country-chip country-chip-more">+{len(countries) - 10} more</span>'
         st.markdown(f'<div class="country-chip-row">{country_chips}</div>', unsafe_allow_html=True)
 
+    filter_left, filter_right = st.columns([1.4, 0.8])
+    with filter_left:
+        hall_search_query = st.text_input(
+            "Search within selected hall",
+            value="",
+            placeholder="Search exhibitor, country, hall, booth, or area",
+            key=f"hall-search-{hall}",
+        )
+    with filter_right:
+        only_booth_ready_rows = st.checkbox(
+            "Only booth-ready rows",
+            value=False,
+            key=f"hall-booth-ready-{hall}",
+        )
+
+    hall_skm_filtered = _apply_lead_table_filters(
+        hall_skm,
+        only_with_booth=only_booth_ready_rows,
+        search_query=hall_search_query,
+    )
+    hall_all_filtered = _apply_lead_table_filters(
+        hall_all,
+        only_with_booth=only_booth_ready_rows,
+        search_query=hall_search_query,
+    )
+
+    _render_filtered_live_counts(
+        hall_skm_filtered,
+        pd.DataFrame(),
+        hall_all_filtered,
+        filters_active=bool(only_booth_ready_rows or hall_search_query.strip()),
+    )
+
     hall_tabs = st.tabs(["SKM Booth Board", "All Leads Booth Board", "SKM Table", "All Leads Table"])
     with hall_tabs[0]:
         _render_section_header("Execution View", "SKM Booth Board", "The priority merchant board for in-hall follow-up.")
-        _render_lead_cards(hall_skm, "No SKM leads found in this hall.")
+        _render_lead_cards(hall_skm_filtered, "No SKM leads match the current hall filters.")
     with hall_tabs[1]:
         _render_section_header("Coverage View", "All Leads Booth Board", "The broader hall roster when you want additional sourcing coverage around SKM targets.")
-        _render_lead_cards(hall_all, "No exhibitor leads found in this hall.")
+        _render_lead_cards(hall_all_filtered, "No exhibitor leads match the current hall filters.")
     with hall_tabs[2]:
         _render_section_header("Structured View", "SKM Table", "Sortable SKM detail for export checks and manual review.")
-        if hall_skm.empty:
-            st.info("No SKM leads found in this hall.")
+        if hall_skm_filtered.empty:
+            st.info("No SKM leads match the current hall filters.")
         else:
-            _render_lead_dataframe(order_columns(hall_skm))
+            _render_lead_dataframe(order_columns(hall_skm_filtered))
     with hall_tabs[3]:
         _render_section_header("Structured View", "All Leads Table", "The complete hall table for filtering, handoff, and downstream operating work.")
-        if hall_all.empty:
-            st.info("No exhibitor leads found in this hall.")
+        if hall_all_filtered.empty:
+            st.info("No exhibitor leads match the current hall filters.")
         else:
-            _render_lead_dataframe(order_columns(hall_all))
+            _render_lead_dataframe(order_columns(hall_all_filtered))
 
 
 def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header: bool = True) -> None:
