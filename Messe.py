@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-overview-spotlights-v29"
+APP_BUILD = "2026-04-28-booth-ready-spotlight-v30"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2873,11 +2873,16 @@ def _render_country_priority_strip(summary_df: pd.DataFrame, row_label: str) -> 
 def _render_overview_spotlights(skm_df: pd.DataFrame) -> None:
     hall_df = hall_summary(skm_df)
     country_df = country_summary(skm_df, row_label="skm_rows")
+    booth_ready_rows = 0
+    booth_ready_share = 0.0
+    if not skm_df.empty and "booth" in skm_df.columns:
+        booth_ready_rows = int(skm_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
+        booth_ready_share = (booth_ready_rows / len(skm_df) * 100) if len(skm_df) else 0.0
 
     top_hall = hall_df.iloc[0] if not hall_df.empty else None
     top_country = country_df.iloc[0] if not country_df.empty else None
 
-    left, right = st.columns(2)
+    left, middle, right = st.columns(3)
     with left:
         if top_hall is None:
             st.markdown(
@@ -2902,7 +2907,7 @@ def _render_overview_spotlights(skm_df: pd.DataFrame) -> None:
                 """,
                 unsafe_allow_html=True,
             )
-    with right:
+    with middle:
         if top_country is None:
             st.markdown(
                 """
@@ -2926,6 +2931,19 @@ def _render_overview_spotlights(skm_df: pd.DataFrame) -> None:
                 """,
                 unsafe_allow_html=True,
             )
+    with right:
+        st.markdown(
+            f"""
+            <div class="dashboard-note">
+                <div class="dashboard-note-title">Booth-ready SKM</div>
+                <div class="dashboard-note-body">
+                    <strong>{booth_ready_rows}</strong> SKM row(s) already include booth detail.<br/>
+                    {booth_ready_share:.1f}% of the current SKM operating list is floor-ready.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def _render_focus_country_card(title: str, skm_rows_df: pd.DataFrame, all_rows_df: pd.DataFrame, total_skm_rows: int, total_all_rows: int) -> None:
