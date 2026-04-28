@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-27-run-summary-v24"
+APP_BUILD = "2026-04-28-export-filenames-v25"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2679,17 +2679,34 @@ def _cache_key(parts: Sequence[Any]) -> str:
     return hashlib.md5(json.dumps(list(parts), sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
+def _export_file_stem(result_df: pd.DataFrame) -> str:
+    source_url = ""
+    if "source_url" in result_df.columns:
+        source_values = [str(v).strip() for v in result_df["source_url"].fillna("").tolist() if str(v).strip()]
+        source_url = source_values[0] if source_values else ""
+
+    host = urlparse(source_url).netloc.lower()
+    host = re.sub(r"^www\.", "", host)
+    host = re.sub(r"[^a-z0-9]+", "_", host).strip("_")
+    if not host:
+        host = "fair"
+
+    run_date = time.strftime("%Y-%m-%d")
+    return f"{host}_{run_date}"
+
+
 def _render_downloads(result_df: pd.DataFrame) -> None:
     ordered = order_columns(sort_leads_by_hall(result_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
     excel_bytes = build_excel_download(ordered)
+    file_stem = _export_file_stem(ordered)
 
     dl1, dl2 = st.columns(2)
     with dl1:
         st.download_button(
             "Download Excel Leads",
             data=excel_bytes,
-            file_name="tiktok_shop_skm_exhibition_matches.xlsx",
+            file_name=f"{file_stem}_skm_console.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
@@ -2697,7 +2714,7 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
         st.download_button(
             "Download All Exhibitor CSV",
             data=csv_bytes,
-            file_name="all_exhibitor_leads.csv",
+            file_name=f"{file_stem}_all_leads.csv",
             mime="text/csv",
             use_container_width=True,
         )
