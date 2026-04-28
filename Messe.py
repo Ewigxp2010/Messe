@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-booth-ready-spotlight-v30"
+APP_BUILD = "2026-04-28-filtered-live-counts-v31"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3263,6 +3263,66 @@ def _render_run_summary_panel(result_df: pd.DataFrame) -> None:
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
 
+def _render_filtered_live_counts(
+    filtered_skm_df: pd.DataFrame,
+    filtered_review_df: pd.DataFrame,
+    filtered_all_df: pd.DataFrame,
+    *,
+    filters_active: bool,
+) -> None:
+    cards = [
+        (
+            "Filtered SKM",
+            len(filtered_skm_df),
+            "Priority merchant rows still visible in the current operating view.",
+        ),
+        (
+            "Filtered All Leads",
+            len(filtered_all_df),
+            "Total lead rows still visible after the current table filters.",
+        ),
+    ]
+
+    if not filtered_review_df.empty:
+        cards.insert(
+            1,
+            (
+                "Filtered Possible Matches",
+                len(filtered_review_df),
+                "Lower-confidence review rows still visible in the current view.",
+            ),
+        )
+
+    cards.append(
+        (
+            "Filter State",
+            "Active" if filters_active else "Default",
+            "Booth and search filters are applied." if filters_active else "Showing the full structured lead tables.",
+        )
+    )
+
+    card_markup = []
+    for title, value, caption in cards:
+        card_markup.append(
+            f"""
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">{html.escape(str(title))}</div>
+                <div class="summary-ribbon-value">{html.escape(str(value))}</div>
+                <div class="summary-ribbon-caption">{html.escape(str(caption))}</div>
+            </div>
+            """
+        )
+
+    st.markdown(
+        f"""
+        <div class="summary-ribbon summary-ribbon-compact">
+            {''.join(card_markup)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_lead_dataframe(df: pd.DataFrame) -> None:
     column_config: Dict[str, Any] = {}
     if "website" in df.columns:
@@ -3344,6 +3404,12 @@ def _render_results(result_df: pd.DataFrame) -> None:
     filtered_skm_df = _apply_lead_table_filters(skm_df, only_with_booth=only_with_booth, search_query=search_query)
     filtered_review_df = _apply_lead_table_filters(review_df, only_with_booth=only_with_booth, search_query=search_query)
     filtered_all_df = _apply_lead_table_filters(all_sorted, only_with_booth=only_with_booth, search_query=search_query)
+    _render_filtered_live_counts(
+        filtered_skm_df,
+        filtered_review_df,
+        filtered_all_df,
+        filters_active=bool(only_with_booth or search_query.strip()),
+    )
     rendered_tabs = st.tabs(tabs)
     tab_skm = rendered_tabs[0]
     tab_all = rendered_tabs[-1]
@@ -3649,6 +3715,10 @@ def _inject_app_css() -> None:
             grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 12px;
             margin: 10px 0 6px 0;
+        }
+        .summary-ribbon-compact {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            margin: 10px 0 14px 0;
         }
         .summary-ribbon-card {
             background: rgba(255, 255, 255, 0.98);
@@ -4058,6 +4128,9 @@ def _inject_app_css() -> None:
                 grid-template-columns: 1fr;
             }
             .summary-ribbon {
+                grid-template-columns: 1fr;
+            }
+            .summary-ribbon-compact {
                 grid-template-columns: 1fr;
             }
             .hall-priority-strip {
