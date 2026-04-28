@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-hall-geography-focus-v34"
+APP_BUILD = "2026-04-28-country-focus-filters-v35"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3250,33 +3250,89 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
         if germany_skm.empty and germany_all.empty:
             st.info("No Germany-based exhibitors found for this fair.")
         else:
+            germany_filter_left, germany_filter_right = st.columns([1.25, 0.75])
+            with germany_filter_left:
+                germany_search_query = st.text_input(
+                    "Search within Germany leads",
+                    value="",
+                    placeholder="Search exhibitor, country, hall, booth, or area",
+                    key="germany-country-search",
+                )
+            with germany_filter_right:
+                germany_booth_ready = st.checkbox("Only booth-ready rows", value=False, key="germany-country-booth")
+            germany_skm_filtered = _apply_lead_table_filters(
+                germany_skm,
+                only_with_booth=germany_booth_ready,
+                search_query=germany_search_query,
+                focus_geography="All markets",
+            )
+            germany_all_filtered = _apply_lead_table_filters(
+                germany_all,
+                only_with_booth=germany_booth_ready,
+                search_query=germany_search_query,
+                focus_geography="All markets",
+            )
+            _render_filtered_live_counts(
+                germany_skm_filtered,
+                pd.DataFrame(),
+                germany_all_filtered,
+                filters_active=bool(germany_booth_ready or germany_search_query.strip()),
+            )
             focus_subtabs = st.tabs(["Germany SKM Leads", "Germany All Leads"])
             with focus_subtabs[0]:
-                if germany_skm.empty:
+                if germany_skm_filtered.empty:
                     st.info("No Germany-based SKM leads found for this fair.")
                 else:
-                    _render_lead_dataframe(order_columns(germany_skm))
+                    _render_lead_dataframe(order_columns(germany_skm_filtered))
             with focus_subtabs[1]:
-                if germany_all.empty:
+                if germany_all_filtered.empty:
                     st.info("No Germany-based exhibitors found for this fair.")
                 else:
-                    _render_lead_dataframe(order_columns(germany_all))
+                    _render_lead_dataframe(order_columns(germany_all_filtered))
     with country_tabs[1]:
         _render_section_header("Focus Country", "China", "Priority and total lead coverage for China-based exhibitors.")
         if china_skm.empty and china_all.empty:
             st.info("No China-based exhibitors found for this fair.")
         else:
+            china_filter_left, china_filter_right = st.columns([1.25, 0.75])
+            with china_filter_left:
+                china_search_query = st.text_input(
+                    "Search within China leads",
+                    value="",
+                    placeholder="Search exhibitor, country, hall, booth, or area",
+                    key="china-country-search",
+                )
+            with china_filter_right:
+                china_booth_ready = st.checkbox("Only booth-ready rows", value=False, key="china-country-booth")
+            china_skm_filtered = _apply_lead_table_filters(
+                china_skm,
+                only_with_booth=china_booth_ready,
+                search_query=china_search_query,
+                focus_geography="All markets",
+            )
+            china_all_filtered = _apply_lead_table_filters(
+                china_all,
+                only_with_booth=china_booth_ready,
+                search_query=china_search_query,
+                focus_geography="All markets",
+            )
+            _render_filtered_live_counts(
+                china_skm_filtered,
+                pd.DataFrame(),
+                china_all_filtered,
+                filters_active=bool(china_booth_ready or china_search_query.strip()),
+            )
             focus_subtabs = st.tabs(["China SKM Leads", "China All Leads"])
             with focus_subtabs[0]:
-                if china_skm.empty:
+                if china_skm_filtered.empty:
                     st.info("No China-based SKM leads found for this fair.")
                 else:
-                    _render_lead_dataframe(order_columns(china_skm))
+                    _render_lead_dataframe(order_columns(china_skm_filtered))
             with focus_subtabs[1]:
-                if china_all.empty:
+                if china_all_filtered.empty:
                     st.info("No China-based exhibitors found for this fair.")
                 else:
-                    _render_lead_dataframe(order_columns(china_all))
+                    _render_lead_dataframe(order_columns(china_all_filtered))
     with country_tabs[2]:
         if skm_country_df.empty:
             st.info("No SKM country data found for this fair.")
