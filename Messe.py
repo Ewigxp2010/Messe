@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-hall-map-filter-controls-v42"
+APP_BUILD = "2026-04-28-navigation-counts-v43"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3308,7 +3308,12 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header:
         st.info("No halls match the current hall filters.")
         return
 
+    hall_counts = {
+        str(record["hall"]): int(record["skm_leads"])
+        for record in filtered_summary_df[["hall", "skm_leads"]].to_dict(orient="records")
+    }
     halls = filtered_summary_df["hall"].tolist()
+    hall_options = [f"{hall} ({hall_counts.get(hall, 0)})" for hall in halls]
 
     base = alt.Chart(filtered_summary_df).encode(
         x=alt.X("map_col:O", axis=None, title=None),
@@ -3343,7 +3348,8 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header:
         """,
         unsafe_allow_html=True,
     )
-    selected_hall = st.selectbox("Choose a hall to open the detailed operating view", halls, label_visibility="collapsed")
+    selected_hall_label = st.selectbox("Choose a hall to open the detailed operating view", hall_options, label_visibility="collapsed")
+    selected_hall = selected_hall_label.rsplit(" (", 1)[0]
     _render_hall_drilldown(selected_hall, skm_df, all_df)
 
 
@@ -3364,7 +3370,14 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
 
     _render_country_priority_strip(skm_country_df if not skm_country_df.empty else all_country_df, "skm_rows" if not skm_country_df.empty else "lead_rows")
 
-    country_tabs = st.tabs(["Germany", "China", "SKM by Country", "All Leads by Country"])
+    country_tabs = st.tabs(
+        [
+            f"Germany ({len(germany_all)})",
+            f"China ({len(china_all)})",
+            f"SKM by Country ({len(skm_country_df)})",
+            f"All Leads by Country ({len(all_country_df)})",
+        ]
+    )
     with country_tabs[0]:
         _render_section_header("Focus Country", "Germany", "Priority and total lead coverage for German exhibitors.")
         if germany_skm.empty and germany_all.empty:
