@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-export-scope-metadata-v45"
+APP_BUILD = "2026-04-28-run-diagnostics-v46"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3718,6 +3718,91 @@ def _render_current_scope(df: pd.DataFrame, title: str, caption: str) -> None:
     )
 
 
+def _infer_run_strategy(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> str:
+    warnings_text = " ".join(scrape_warnings).lower()
+    methods = set()
+    if "extraction_method" in result_df.columns:
+        methods = {
+            str(value).strip().lower()
+            for value in result_df["extraction_method"].fillna("").tolist()
+            if str(value).strip()
+        }
+
+    if "messe frankfurt exhibitor api" in warnings_text:
+        return "Embedded API"
+    if "interzoo structured search api" in warnings_text:
+        return "Structured API"
+    if "sitemap profile fallback" in warnings_text or "sitemap_profile" in methods:
+        return "Sitemap Profile"
+    if "embedded api quality check" in warnings_text:
+        return "Embedded API"
+    if "site adapter quality check" in warnings_text:
+        return "Site Adapter"
+    if "json" in methods:
+        return "Embedded API"
+    if "table" in methods or "custom_selector" in methods or "card" in methods:
+        return "HTML Directory"
+    return "Auto Strategy"
+
+
+def _render_run_diagnostics(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> None:
+    total_rows = len(result_df)
+    hall_count = 0
+    booth_rows = 0
+    country_count = 0
+    if total_rows:
+        if "hall" in result_df.columns:
+            hall_count = int(result_df["hall"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+        if "booth" in result_df.columns:
+            booth_rows = int(result_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
+        if "country" in result_df.columns:
+            country_count = int(result_df["country"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+
+    hall_coverage = (hall_count / total_rows * 100) if total_rows else 0.0
+    booth_coverage = (booth_rows / total_rows * 100) if total_rows else 0.0
+    strategy = _infer_run_strategy(result_df, scrape_warnings)
+    warning_count = len(scrape_warnings)
+
+    st.markdown(
+        f"""
+        <div class="dashboard-note">
+            <div class="dashboard-note-title">Run Diagnostics</div>
+            <div class="dashboard-note-body">
+                Strategy <strong>{html.escape(strategy)}</strong> with {warning_count} warning(s) recorded during capture.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="summary-ribbon summary-ribbon-compact">
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Capture Mode</div>
+                <div class="summary-ribbon-value">{html.escape(strategy)}</div>
+                <div class="summary-ribbon-caption">The dominant retrieval path used for this fair run.</div>
+            </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Hall Coverage</div>
+                <div class="summary-ribbon-value">{hall_coverage:.1f}%</div>
+                <div class="summary-ribbon-caption">{hall_count} unique hall values visible in the current result set.</div>
+            </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Booth Coverage</div>
+                <div class="summary-ribbon-value">{booth_coverage:.1f}%</div>
+                <div class="summary-ribbon-caption">{booth_rows} rows already include booth-level placement detail.</div>
+            </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Country Signals</div>
+                <div class="summary-ribbon-value">{country_count}</div>
+                <div class="summary-ribbon-caption">Source countries represented in the current operating list.</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_lead_dataframe(df: pd.DataFrame) -> None:
     column_config: Dict[str, Any] = {}
     if "website" in df.columns:
@@ -3763,7 +3848,8 @@ def _apply_lead_table_filters(df: pd.DataFrame, *, only_with_booth: bool, search
     return working
 
 
-def _render_results(result_df: pd.DataFrame) -> None:
+def _render_results(result_df: pd.DataFrame, scrape_warnings: Optional[Sequence[str]] = None) -> None:
+    scrape_warnings = list(scrape_warnings or [])
     summary = summarize_matches(_safe_records(result_df))
     skm_df = sort_leads_by_hall(skm_leads(result_df))
     review_df = sort_leads_by_hall(review_leads(result_df))
@@ -3776,6 +3862,7 @@ def _render_results(result_df: pd.DataFrame) -> None:
     metric_cols[2].metric("Needs Review", summary["review"])
     _render_summary_ribbon(all_sorted, skm_df)
     _render_overview_spotlights(skm_df)
+    _render_run_diagnostics(result_df, scrape_warnings)
 
     action_left, action_right = st.columns([1.2, 1])
     with action_left:
@@ -4851,7 +4938,7 @@ def main() -> None:
                     st.warning(warning)
                 if len(scrape_warnings) > 25:
                     st.warning(f"...and {len(scrape_warnings) - 25} more skipped pages.")
-        _render_results(st.session_state[result_state_key])
+        _render_results(st.session_state[result_state_key], scrape_warnings=scrape_warnings)
 
 
 if __name__ == "__main__":
