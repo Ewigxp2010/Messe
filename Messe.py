@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-hall-drilldown-filters-v32"
+APP_BUILD = "2026-04-28-geography-filters-v33"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3330,7 +3330,7 @@ def _render_filtered_live_counts(
         (
             "Filter State",
             "Active" if filters_active else "Default",
-            "Booth and search filters are applied." if filters_active else "Showing the full structured lead tables.",
+            "Table filters are applied." if filters_active else "Showing the full structured lead tables.",
         )
     )
 
@@ -3367,8 +3367,24 @@ def _render_lead_dataframe(df: pd.DataFrame) -> None:
     st.dataframe(df, use_container_width=True, hide_index=True, column_config=column_config or None)
 
 
-def _apply_lead_table_filters(df: pd.DataFrame, *, only_with_booth: bool, search_query: str) -> pd.DataFrame:
+def _apply_geography_focus_filter(df: pd.DataFrame, focus_geography: str) -> pd.DataFrame:
+    if df.empty or "country" not in df.columns or focus_geography == "All markets":
+        return df.copy()
+
     working = df.copy()
+    countries = working["country"].fillna("").astype(str).str.strip().str.lower()
+    if focus_geography == "Germany":
+        mask = countries.str.contains(r"\b(germany|deutschland)\b", regex=True)
+        return working[mask]
+    if focus_geography == "China":
+        mask = countries.str.contains(r"\b(china)\b", regex=True)
+        return working[mask]
+    return working
+
+
+def _apply_lead_table_filters(df: pd.DataFrame, *, only_with_booth: bool, search_query: str, focus_geography: str) -> pd.DataFrame:
+    working = df.copy()
+    working = _apply_geography_focus_filter(working, focus_geography)
     if only_with_booth and "booth" in working.columns:
         working = working[working["booth"].fillna("").astype(str).str.strip().ne("")]
     query = search_query.strip().lower()
@@ -3428,20 +3444,37 @@ def _render_results(result_df: pd.DataFrame) -> None:
     if not review_df.empty:
         tabs.insert(1, "Possible Matches")
     _render_section_header("Lead Tables", "Lead Sheets", "Use the structured tables when you need full-list review, filtering, or export checks.")
-    filter_left, filter_right = st.columns([0.8, 1.4])
+    filter_left, filter_middle, filter_right = st.columns([0.8, 0.9, 1.3])
     with filter_left:
         only_with_booth = st.checkbox("Only rows with booth", value=False)
+    with filter_middle:
+        focus_geography = st.selectbox("Focus geography", ["All markets", "Germany", "China"], index=0)
     with filter_right:
         search_query = st.text_input("Search exhibitor, country, hall, booth, or area", value="", placeholder="Search within lead tables")
 
-    filtered_skm_df = _apply_lead_table_filters(skm_df, only_with_booth=only_with_booth, search_query=search_query)
-    filtered_review_df = _apply_lead_table_filters(review_df, only_with_booth=only_with_booth, search_query=search_query)
-    filtered_all_df = _apply_lead_table_filters(all_sorted, only_with_booth=only_with_booth, search_query=search_query)
+    filtered_skm_df = _apply_lead_table_filters(
+        skm_df,
+        only_with_booth=only_with_booth,
+        search_query=search_query,
+        focus_geography=focus_geography,
+    )
+    filtered_review_df = _apply_lead_table_filters(
+        review_df,
+        only_with_booth=only_with_booth,
+        search_query=search_query,
+        focus_geography=focus_geography,
+    )
+    filtered_all_df = _apply_lead_table_filters(
+        all_sorted,
+        only_with_booth=only_with_booth,
+        search_query=search_query,
+        focus_geography=focus_geography,
+    )
     _render_filtered_live_counts(
         filtered_skm_df,
         filtered_review_df,
         filtered_all_df,
-        filters_active=bool(only_with_booth or search_query.strip()),
+        filters_active=bool(only_with_booth or search_query.strip() or focus_geography != "All markets"),
     )
     rendered_tabs = st.tabs(tabs)
     tab_skm = rendered_tabs[0]
