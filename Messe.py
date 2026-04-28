@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-clickable-links-v28"
+APP_BUILD = "2026-04-28-overview-spotlights-v29"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2870,6 +2870,64 @@ def _render_country_priority_strip(summary_df: pd.DataFrame, row_label: str) -> 
     )
 
 
+def _render_overview_spotlights(skm_df: pd.DataFrame) -> None:
+    hall_df = hall_summary(skm_df)
+    country_df = country_summary(skm_df, row_label="skm_rows")
+
+    top_hall = hall_df.iloc[0] if not hall_df.empty else None
+    top_country = country_df.iloc[0] if not country_df.empty else None
+
+    left, right = st.columns(2)
+    with left:
+        if top_hall is None:
+            st.markdown(
+                """
+                <div class="dashboard-note">
+                    <div class="dashboard-note-title">Top Hall</div>
+                    <div class="dashboard-note-body">No SKM hall signal is available yet for this fair.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"""
+                <div class="dashboard-note">
+                    <div class="dashboard-note-title">Top Hall</div>
+                    <div class="dashboard-note-body">
+                        <strong>{html.escape(str(top_hall['hall']))}</strong><br/>
+                        {int(top_hall['skm_leads'])} SKM row(s) currently cluster here.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    with right:
+        if top_country is None:
+            st.markdown(
+                """
+                <div class="dashboard-note">
+                    <div class="dashboard-note-title">Top Source Country</div>
+                    <div class="dashboard-note-body">No country signal is available yet for this fair.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"""
+                <div class="dashboard-note">
+                    <div class="dashboard-note-title">Top Source Country</div>
+                    <div class="dashboard-note-body">
+                        <strong>{html.escape(str(top_country['country']))}</strong><br/>
+                        {int(top_country['skm_rows'])} SKM row(s) across {int(top_country['unique_halls'])} hall(s).
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
 def _render_focus_country_card(title: str, skm_rows_df: pd.DataFrame, all_rows_df: pd.DataFrame, total_skm_rows: int, total_all_rows: int) -> None:
     skm_count = len(skm_rows_df)
     all_count = len(all_rows_df)
@@ -3228,6 +3286,7 @@ def _render_results(result_df: pd.DataFrame) -> None:
     metric_cols[1].metric("SKM Exhibitor Leads", summary["skm_matches"])
     metric_cols[2].metric("Needs Review", summary["review"])
     _render_summary_ribbon(all_sorted, skm_df)
+    _render_overview_spotlights(skm_df)
 
     action_left, action_right = st.columns([1.2, 1])
     with action_left:
