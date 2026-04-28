@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-current-scope-v44"
+APP_BUILD = "2026-04-28-export-scope-metadata-v45"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2455,7 +2455,12 @@ def _focus_country_rows(df: pd.DataFrame, country_key: str) -> pd.DataFrame:
     return df[_country_focus_mask(df["country"], country_key)].copy()
 
 
-def run_summary_frame(all_df: pd.DataFrame) -> pd.DataFrame:
+def run_summary_frame(
+    all_df: pd.DataFrame,
+    *,
+    export_scope: str = "",
+    active_filters: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
     total_rows = len(all_df)
     skm_df = skm_leads(all_df)
     review_df = review_leads(all_df)
@@ -2485,10 +2490,20 @@ def run_summary_frame(all_df: pd.DataFrame) -> pd.DataFrame:
         {"metric": "Booth-level Rows", "value": booth_count},
         {"metric": "Source Countries", "value": country_count},
     ]
+    filter_labels = [str(label).strip() for label in (active_filters or []) if str(label).strip()]
+    if export_scope:
+        rows.append({"metric": "Export Scope", "value": export_scope})
+    if filter_labels:
+        rows.append({"metric": "Active Filters", "value": " | ".join(filter_labels)})
     return pd.DataFrame(rows)
 
 
-def build_excel_download(all_df: pd.DataFrame) -> bytes:
+def build_excel_download(
+    all_df: pd.DataFrame,
+    *,
+    export_scope: str = "",
+    active_filters: Optional[Sequence[str]] = None,
+) -> bytes:
     output = BytesIO()
     skm_df = sort_leads_by_hall(skm_leads(all_df))
     review_df = sort_leads_by_hall(review_leads(all_df))
@@ -2498,7 +2513,7 @@ def build_excel_download(all_df: pd.DataFrame) -> bytes:
     all_country_df = country_summary(all_sorted, row_label="lead_rows")
     germany_skm_df = order_columns(sort_leads_by_hall(_focus_country_rows(skm_df, "germany")))
     china_skm_df = order_columns(sort_leads_by_hall(_focus_country_rows(skm_df, "china")))
-    run_summary_df = run_summary_frame(all_df)
+    run_summary_df = run_summary_frame(all_df, export_scope=export_scope, active_filters=active_filters)
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         run_summary_df.to_excel(writer, sheet_name="Run Summary", index=False)
@@ -2720,10 +2735,15 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
         )
 
 
-def _render_filtered_downloads(filtered_df: pd.DataFrame) -> None:
+def _render_filtered_downloads(
+    filtered_df: pd.DataFrame,
+    *,
+    export_scope: str = "Filtered Lead Tables",
+    active_filters: Optional[Sequence[str]] = None,
+) -> None:
     ordered = order_columns(sort_leads_by_hall(filtered_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
-    excel_bytes = build_excel_download(ordered)
+    excel_bytes = build_excel_download(ordered, export_scope=export_scope, active_filters=active_filters)
     file_stem = _export_file_stem(ordered)
 
     st.markdown(
@@ -2757,10 +2777,18 @@ def _render_filtered_downloads(filtered_df: pd.DataFrame) -> None:
         )
 
 
-def _render_filtered_downloads_with_context(filtered_df: pd.DataFrame, title: str, body: str, stem_suffix: str) -> None:
+def _render_filtered_downloads_with_context(
+    filtered_df: pd.DataFrame,
+    title: str,
+    body: str,
+    stem_suffix: str,
+    *,
+    export_scope: str,
+    active_filters: Optional[Sequence[str]] = None,
+) -> None:
     ordered = order_columns(sort_leads_by_hall(filtered_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
-    excel_bytes = build_excel_download(ordered)
+    excel_bytes = build_excel_download(ordered, export_scope=export_scope, active_filters=active_filters)
     file_stem = _export_file_stem(ordered)
 
     st.markdown(
@@ -3187,14 +3215,13 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
                     f"hall-booth-ready-{hall}": False,
                 }
             )
-    _render_active_filter_chips(
-        [
-            f"Hall: {hall}",
-            f"Geography: {hall_focus_geography}" if hall_focus_geography != "All markets" else "",
-            "Booth-ready only" if only_booth_ready_rows else "",
-            f"Search: {hall_search_query.strip()}" if hall_search_query.strip() else "",
-        ]
-    )
+    hall_filter_labels = [
+        f"Hall: {hall}",
+        f"Geography: {hall_focus_geography}" if hall_focus_geography != "All markets" else "",
+        "Booth-ready only" if only_booth_ready_rows else "",
+        f"Search: {hall_search_query.strip()}" if hall_search_query.strip() else "",
+    ]
+    _render_active_filter_chips(hall_filter_labels)
 
     hall_skm_filtered = _apply_lead_table_filters(
         hall_skm,
@@ -3225,6 +3252,8 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         title="Hall Export",
         body="Export the exact lead slice visible in the selected hall, including geography and booth-ready constraints.",
         stem_suffix="hall_filtered",
+        export_scope=f"Selected Hall: {hall}",
+        active_filters=hall_filter_labels,
     )
 
     hall_tabs = st.tabs(
@@ -3407,13 +3436,12 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                             "germany-country-booth": False,
                         }
                     )
-            _render_active_filter_chips(
-                [
-                    "Market: Germany",
-                    "Booth-ready only" if germany_booth_ready else "",
-                    f"Search: {germany_search_query.strip()}" if germany_search_query.strip() else "",
-                ]
-            )
+            germany_filter_labels = [
+                "Market: Germany",
+                "Booth-ready only" if germany_booth_ready else "",
+                f"Search: {germany_search_query.strip()}" if germany_search_query.strip() else "",
+            ]
+            _render_active_filter_chips(germany_filter_labels)
             germany_skm_filtered = _apply_lead_table_filters(
                 germany_skm,
                 only_with_booth=germany_booth_ready,
@@ -3442,6 +3470,8 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 title="Germany Export",
                 body="Export the exact Germany lead slice visible in this focus view, including booth-ready and search filters.",
                 stem_suffix="germany_filtered",
+                export_scope="Focus Country: Germany",
+                active_filters=germany_filter_labels,
             )
             focus_subtabs = st.tabs(
                 [
@@ -3483,13 +3513,12 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                             "china-country-booth": False,
                         }
                     )
-            _render_active_filter_chips(
-                [
-                    "Market: China",
-                    "Booth-ready only" if china_booth_ready else "",
-                    f"Search: {china_search_query.strip()}" if china_search_query.strip() else "",
-                ]
-            )
+            china_filter_labels = [
+                "Market: China",
+                "Booth-ready only" if china_booth_ready else "",
+                f"Search: {china_search_query.strip()}" if china_search_query.strip() else "",
+            ]
+            _render_active_filter_chips(china_filter_labels)
             china_skm_filtered = _apply_lead_table_filters(
                 china_skm,
                 only_with_booth=china_booth_ready,
@@ -3518,6 +3547,8 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 title="China Export",
                 body="Export the exact China lead slice visible in this focus view, including booth-ready and search filters.",
                 stem_suffix="china_filtered",
+                export_scope="Focus Country: China",
+                active_filters=china_filter_labels,
             )
             focus_subtabs = st.tabs(
                 [
@@ -3789,13 +3820,12 @@ def _render_results(result_df: pd.DataFrame) -> None:
                     "lead-table-search": "",
                 }
             )
-    _render_active_filter_chips(
-        [
-            f"Geography: {focus_geography}" if focus_geography != "All markets" else "Geography: All markets",
-            "Booth-ready only" if only_with_booth else "",
-            f"Search: {search_query.strip()}" if search_query.strip() else "",
-        ]
-    )
+    lead_filter_labels = [
+        f"Geography: {focus_geography}" if focus_geography != "All markets" else "Geography: All markets",
+        "Booth-ready only" if only_with_booth else "",
+        f"Search: {search_query.strip()}" if search_query.strip() else "",
+    ]
+    _render_active_filter_chips(lead_filter_labels)
 
     filtered_skm_df = _apply_lead_table_filters(
         skm_df,
@@ -3829,7 +3859,11 @@ def _render_results(result_df: pd.DataFrame) -> None:
         title="Current Lead Scope",
         caption="A quick coverage snapshot for the exact lead slice visible under the current table filters.",
     )
-    _render_filtered_downloads(filtered_all_df)
+    _render_filtered_downloads(
+        filtered_all_df,
+        export_scope="Filtered Lead Tables",
+        active_filters=lead_filter_labels,
+    )
     rendered_tabs = st.tabs(tabs)
     tab_skm = rendered_tabs[0]
     tab_all = rendered_tabs[-1]
