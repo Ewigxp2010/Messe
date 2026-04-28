@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-filter-reset-actions-v39"
+APP_BUILD = "2026-04-28-active-filter-chips-v40"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3187,6 +3187,14 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
                     f"hall-booth-ready-{hall}": False,
                 }
             )
+    _render_active_filter_chips(
+        [
+            f"Hall: {hall}",
+            f"Geography: {hall_focus_geography}" if hall_focus_geography != "All markets" else "",
+            "Booth-ready only" if only_booth_ready_rows else "",
+            f"Search: {hall_search_query.strip()}" if hall_search_query.strip() else "",
+        ]
+    )
 
     hall_skm_filtered = _apply_lead_table_filters(
         hall_skm,
@@ -3359,6 +3367,13 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                             "germany-country-booth": False,
                         }
                     )
+            _render_active_filter_chips(
+                [
+                    "Market: Germany",
+                    "Booth-ready only" if germany_booth_ready else "",
+                    f"Search: {germany_search_query.strip()}" if germany_search_query.strip() else "",
+                ]
+            )
             germany_skm_filtered = _apply_lead_table_filters(
                 germany_skm,
                 only_with_booth=germany_booth_ready,
@@ -3418,6 +3433,13 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                             "china-country-booth": False,
                         }
                     )
+            _render_active_filter_chips(
+                [
+                    "Market: China",
+                    "Booth-ready only" if china_booth_ready else "",
+                    f"Search: {china_search_query.strip()}" if china_search_query.strip() else "",
+                ]
+            )
             china_skm_filtered = _apply_lead_table_filters(
                 china_skm,
                 only_with_booth=china_booth_ready,
@@ -3547,6 +3569,14 @@ def _reset_filter_state(defaults: Dict[str, Any]) -> None:
     st.rerun()
 
 
+def _render_active_filter_chips(labels: Sequence[str]) -> None:
+    chips = [label for label in labels if str(label).strip()]
+    if not chips:
+        return
+    chips_html = "".join([f'<span class="country-chip">{html.escape(str(label))}</span>' for label in chips])
+    st.markdown(f'<div class="country-chip-row country-chip-row-tight">{chips_html}</div>', unsafe_allow_html=True)
+
+
 def _render_lead_dataframe(df: pd.DataFrame) -> None:
     column_config: Dict[str, Any] = {}
     if "website" in df.columns:
@@ -3652,6 +3682,13 @@ def _render_results(result_df: pd.DataFrame) -> None:
                     "lead-table-search": "",
                 }
             )
+    _render_active_filter_chips(
+        [
+            f"Geography: {focus_geography}" if focus_geography != "All markets" else "Geography: All markets",
+            "Booth-ready only" if only_with_booth else "",
+            f"Search: {search_query.strip()}" if search_query.strip() else "",
+        ]
+    )
 
     filtered_skm_df = _apply_lead_table_filters(
         skm_df,
@@ -4138,6 +4175,9 @@ def _inject_app_css() -> None:
             flex-wrap: wrap;
             gap: 8px;
             margin: 4px 0 6px 0;
+        }
+        .country-chip-row-tight {
+            margin: 2px 0 10px 0;
         }
         .country-chip {
             display: inline-flex;
