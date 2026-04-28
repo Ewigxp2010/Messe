@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-country-focus-filters-v35"
+APP_BUILD = "2026-04-28-filtered-exports-v36"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2720,6 +2720,43 @@ def _render_downloads(result_df: pd.DataFrame) -> None:
         )
 
 
+def _render_filtered_downloads(filtered_df: pd.DataFrame) -> None:
+    ordered = order_columns(sort_leads_by_hall(filtered_df))
+    csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
+    excel_bytes = build_excel_download(ordered)
+    file_stem = _export_file_stem(ordered)
+
+    st.markdown(
+        """
+        <div class="dashboard-note">
+            <div class="dashboard-note-title">Filtered Export</div>
+            <div class="dashboard-note-body">
+                Export the exact lead slice visible under the current table filters, including geography and booth-ready constraints.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    dl1, dl2 = st.columns(2)
+    with dl1:
+        st.download_button(
+            "Download Filtered Excel",
+            data=excel_bytes,
+            file_name=f"{file_stem}_filtered_console.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    with dl2:
+        st.download_button(
+            "Download Filtered CSV",
+            data=csv_bytes,
+            file_name=f"{file_stem}_filtered_leads.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+
 def _hall_filtered_rows(df: pd.DataFrame, hall: str) -> pd.DataFrame:
     if df.empty or "hall" not in df.columns:
         return df.head(0)
@@ -3541,6 +3578,7 @@ def _render_results(result_df: pd.DataFrame) -> None:
         filtered_all_df,
         filters_active=bool(only_with_booth or search_query.strip() or focus_geography != "All markets"),
     )
+    _render_filtered_downloads(filtered_all_df)
     rendered_tabs = st.tabs(tabs)
     tab_skm = rendered_tabs[0]
     tab_all = rendered_tabs[-1]
