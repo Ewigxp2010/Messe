@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-run-diagnostics-v46"
+APP_BUILD = "2026-04-28-field-brief-v47"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3803,6 +3803,57 @@ def _render_run_diagnostics(result_df: pd.DataFrame, scrape_warnings: Sequence[s
     )
 
 
+def _build_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> str:
+    total_rows = len(result_df)
+    skm_df = sort_leads_by_hall(skm_leads(result_df))
+    review_df = sort_leads_by_hall(review_leads(result_df))
+    strategy = _infer_run_strategy(result_df, scrape_warnings)
+    top_hall = "n/a"
+    top_country = "n/a"
+    booth_ready_rows = 0
+
+    hall_df = hall_summary(skm_df)
+    if not hall_df.empty:
+        top_hall = str(hall_df.iloc[0]["hall"])
+
+    country_df = country_summary(skm_df, row_label="skm_rows")
+    if not country_df.empty:
+        top_country = str(country_df.iloc[0]["country"])
+
+    if "booth" in result_df.columns:
+        booth_ready_rows = int(result_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
+
+    source_url = ""
+    if "source_url" in result_df.columns:
+        source_values = [str(v).strip() for v in result_df["source_url"].fillna("").tolist() if str(v).strip()]
+        source_url = source_values[0] if source_values else ""
+    host = urlparse(source_url).netloc.lower()
+    host = re.sub(r"^www\.", "", host)
+    host = host or "fair site"
+
+    return (
+        f"{host}: {total_rows} lead rows captured, {len(skm_df)} SKM rows identified, "
+        f"{len(review_df)} possible matches, capture mode {strategy}, top hall {top_hall}, "
+        f"top source country {top_country}, booth-ready rows {booth_ready_rows}, warnings {len(scrape_warnings)}."
+    )
+
+
+def _render_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> None:
+    brief_text = _build_field_brief(result_df, scrape_warnings)
+    st.markdown(
+        """
+        <div class="dashboard-note">
+            <div class="dashboard-note-title">Field Brief</div>
+            <div class="dashboard-note-body">
+                A share-ready summary you can paste into chat, notes, or internal updates without rewriting the run by hand.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.text_area("Field Brief", value=brief_text, height=96, key="field-brief-text")
+
+
 def _render_lead_dataframe(df: pd.DataFrame) -> None:
     column_config: Dict[str, Any] = {}
     if "website" in df.columns:
@@ -3863,6 +3914,7 @@ def _render_results(result_df: pd.DataFrame, scrape_warnings: Optional[Sequence[
     _render_summary_ribbon(all_sorted, skm_df)
     _render_overview_spotlights(skm_df)
     _render_run_diagnostics(result_df, scrape_warnings)
+    _render_field_brief(result_df, scrape_warnings)
 
     action_left, action_right = st.columns([1.2, 1])
     with action_left:
