@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-hall-filters-v27"
+APP_BUILD = "2026-04-28-clickable-links-v28"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3018,13 +3018,13 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         if hall_skm.empty:
             st.info("No SKM leads found in this hall.")
         else:
-            st.dataframe(order_columns(hall_skm), use_container_width=True, hide_index=True)
+            _render_lead_dataframe(order_columns(hall_skm))
     with hall_tabs[3]:
         _render_section_header("Structured View", "All Leads Table", "The complete hall table for filtering, handoff, and downstream operating work.")
         if hall_all.empty:
             st.info("No exhibitor leads found in this hall.")
         else:
-            st.dataframe(order_columns(hall_all), use_container_width=True, hide_index=True)
+            _render_lead_dataframe(order_columns(hall_all))
 
 
 def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header: bool = True) -> None:
@@ -3137,12 +3137,12 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 if germany_skm.empty:
                     st.info("No Germany-based SKM leads found for this fair.")
                 else:
-                    st.dataframe(order_columns(germany_skm), use_container_width=True, hide_index=True)
+                    _render_lead_dataframe(order_columns(germany_skm))
             with focus_subtabs[1]:
                 if germany_all.empty:
                     st.info("No Germany-based exhibitors found for this fair.")
                 else:
-                    st.dataframe(order_columns(germany_all), use_container_width=True, hide_index=True)
+                    _render_lead_dataframe(order_columns(germany_all))
     with country_tabs[1]:
         _render_section_header("Focus Country", "China", "Priority and total lead coverage for China-based exhibitors.")
         if china_skm.empty and china_all.empty:
@@ -3153,12 +3153,12 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 if china_skm.empty:
                     st.info("No China-based SKM leads found for this fair.")
                 else:
-                    st.dataframe(order_columns(china_skm), use_container_width=True, hide_index=True)
+                    _render_lead_dataframe(order_columns(china_skm))
             with focus_subtabs[1]:
                 if china_all.empty:
                     st.info("No China-based exhibitors found for this fair.")
                 else:
-                    st.dataframe(order_columns(china_all), use_container_width=True, hide_index=True)
+                    _render_lead_dataframe(order_columns(china_all))
     with country_tabs[2]:
         if skm_country_df.empty:
             st.info("No SKM country data found for this fair.")
@@ -3185,6 +3185,17 @@ def _render_run_summary_panel(result_df: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+
+def _render_lead_dataframe(df: pd.DataFrame) -> None:
+    column_config: Dict[str, Any] = {}
+    if "website" in df.columns:
+        column_config["website"] = st.column_config.LinkColumn("website", display_text="Website")
+    if "detail_url" in df.columns:
+        column_config["detail_url"] = st.column_config.LinkColumn("detail_url", display_text="Detail")
+    if "source_url" in df.columns:
+        column_config["source_url"] = st.column_config.LinkColumn("source_url", display_text="Source")
+    st.dataframe(df, use_container_width=True, hide_index=True, column_config=column_config or None)
 
 
 def _apply_lead_table_filters(df: pd.DataFrame, *, only_with_booth: bool, search_query: str) -> pd.DataFrame:
@@ -3261,19 +3272,15 @@ def _render_results(result_df: pd.DataFrame) -> None:
     tab_all = rendered_tabs[-1]
     with tab_skm:
         _render_section_header("Priority Leads", "SKM Exhibitor Leads", "High-confidence SKM merchants, ready for booth-level follow-up.")
-        st.dataframe(
-            order_columns(filtered_skm_df),
-            use_container_width=True,
-            hide_index=True,
-        )
+        _render_lead_dataframe(order_columns(filtered_skm_df))
     if not review_df.empty:
         with rendered_tabs[1]:
             _render_section_header("Review Queue", "Possible Matches", "Lower-confidence matches separated from the main SKM operating list.")
             st.caption("These are lower-confidence fuzzy matches. Use them only as a backup review list.")
-            st.dataframe(order_columns(filtered_review_df), use_container_width=True, hide_index=True)
+            _render_lead_dataframe(order_columns(filtered_review_df))
     with tab_all:
         _render_section_header("Full Coverage", "All Exhibitor Leads", "The complete fair lead list, ordered for review, filtering, and export.")
-        st.dataframe(order_columns(filtered_all_df), use_container_width=True, hide_index=True)
+        _render_lead_dataframe(order_columns(filtered_all_df))
 
 
 def _inject_app_css() -> None:
