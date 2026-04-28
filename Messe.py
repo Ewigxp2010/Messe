@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-country-filtered-exports-v38"
+APP_BUILD = "2026-04-28-filter-reset-actions-v39"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3156,7 +3156,7 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
             country_chips += f'<span class="country-chip country-chip-more">+{len(countries) - 10} more</span>'
         st.markdown(f'<div class="country-chip-row">{country_chips}</div>', unsafe_allow_html=True)
 
-    filter_left, filter_middle, filter_right = st.columns([1.1, 0.9, 0.8])
+    filter_left, filter_middle, filter_right, filter_action = st.columns([1.0, 0.85, 0.75, 0.7])
     with filter_left:
         hall_search_query = st.text_input(
             "Search within selected hall",
@@ -3177,6 +3177,16 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
             value=False,
             key=f"hall-booth-ready-{hall}",
         )
+    with filter_action:
+        st.markdown("<div style='height: 1.7rem;'></div>", unsafe_allow_html=True)
+        if st.button("Reset filters", use_container_width=True, key=f"hall-reset-{hall}"):
+            _reset_filter_state(
+                {
+                    f"hall-search-{hall}": "",
+                    f"hall-geography-{hall}": "All markets",
+                    f"hall-booth-ready-{hall}": False,
+                }
+            )
 
     hall_skm_filtered = _apply_lead_table_filters(
         hall_skm,
@@ -3330,7 +3340,7 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
         if germany_skm.empty and germany_all.empty:
             st.info("No Germany-based exhibitors found for this fair.")
         else:
-            germany_filter_left, germany_filter_right = st.columns([1.25, 0.75])
+            germany_filter_left, germany_filter_right, germany_filter_action = st.columns([1.1, 0.75, 0.7])
             with germany_filter_left:
                 germany_search_query = st.text_input(
                     "Search within Germany leads",
@@ -3340,6 +3350,15 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 )
             with germany_filter_right:
                 germany_booth_ready = st.checkbox("Only booth-ready rows", value=False, key="germany-country-booth")
+            with germany_filter_action:
+                st.markdown("<div style='height: 1.7rem;'></div>", unsafe_allow_html=True)
+                if st.button("Reset filters", use_container_width=True, key="germany-country-reset"):
+                    _reset_filter_state(
+                        {
+                            "germany-country-search": "",
+                            "germany-country-booth": False,
+                        }
+                    )
             germany_skm_filtered = _apply_lead_table_filters(
                 germany_skm,
                 only_with_booth=germany_booth_ready,
@@ -3380,7 +3399,7 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
         if china_skm.empty and china_all.empty:
             st.info("No China-based exhibitors found for this fair.")
         else:
-            china_filter_left, china_filter_right = st.columns([1.25, 0.75])
+            china_filter_left, china_filter_right, china_filter_action = st.columns([1.1, 0.75, 0.7])
             with china_filter_left:
                 china_search_query = st.text_input(
                     "Search within China leads",
@@ -3390,6 +3409,15 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 )
             with china_filter_right:
                 china_booth_ready = st.checkbox("Only booth-ready rows", value=False, key="china-country-booth")
+            with china_filter_action:
+                st.markdown("<div style='height: 1.7rem;'></div>", unsafe_allow_html=True)
+                if st.button("Reset filters", use_container_width=True, key="china-country-reset"):
+                    _reset_filter_state(
+                        {
+                            "china-country-search": "",
+                            "china-country-booth": False,
+                        }
+                    )
             china_skm_filtered = _apply_lead_table_filters(
                 china_skm,
                 only_with_booth=china_booth_ready,
@@ -3513,6 +3541,12 @@ def _render_filtered_live_counts(
     )
 
 
+def _reset_filter_state(defaults: Dict[str, Any]) -> None:
+    for key, value in defaults.items():
+        st.session_state[key] = value
+    st.rerun()
+
+
 def _render_lead_dataframe(df: pd.DataFrame) -> None:
     column_config: Dict[str, Any] = {}
     if "website" in df.columns:
@@ -3601,13 +3635,23 @@ def _render_results(result_df: pd.DataFrame) -> None:
     if not review_df.empty:
         tabs.insert(1, "Possible Matches")
     _render_section_header("Lead Tables", "Lead Sheets", "Use the structured tables when you need full-list review, filtering, or export checks.")
-    filter_left, filter_middle, filter_right = st.columns([0.8, 0.9, 1.3])
+    filter_left, filter_middle, filter_right, filter_action = st.columns([0.75, 0.9, 1.15, 0.7])
     with filter_left:
-        only_with_booth = st.checkbox("Only rows with booth", value=False)
+        only_with_booth = st.checkbox("Only rows with booth", value=False, key="lead-table-only-booth")
     with filter_middle:
-        focus_geography = st.selectbox("Focus geography", ["All markets", "Germany", "China"], index=0)
+        focus_geography = st.selectbox("Focus geography", ["All markets", "Germany", "China"], index=0, key="lead-table-geography")
     with filter_right:
-        search_query = st.text_input("Search exhibitor, country, hall, booth, or area", value="", placeholder="Search within lead tables")
+        search_query = st.text_input("Search exhibitor, country, hall, booth, or area", value="", placeholder="Search within lead tables", key="lead-table-search")
+    with filter_action:
+        st.markdown("<div style='height: 1.7rem;'></div>", unsafe_allow_html=True)
+        if st.button("Reset filters", use_container_width=True, key="lead-table-reset"):
+            _reset_filter_state(
+                {
+                    "lead-table-only-booth": False,
+                    "lead-table-geography": "All markets",
+                    "lead-table-search": "",
+                }
+            )
 
     filtered_skm_df = _apply_lead_table_filters(
         skm_df,
