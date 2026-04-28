@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-quick-filters-v26"
+APP_BUILD = "2026-04-28-hall-filters-v27"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3046,9 +3046,33 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header:
     summary_df["label"] = summary_df["hall"].astype(str) + "\n" + summary_df["skm_leads"].astype(str) + " SKM"
     summary_df["countries_short"] = summary_df["countries"].astype(str).str.slice(0, 120)
     summary_df["exhibitors_short"] = summary_df["exhibitors"].astype(str).str.slice(0, 220)
-    halls = summary_df["hall"].tolist()
+    filter_left, filter_right = st.columns([1.2, 0.8])
+    with filter_left:
+        hall_query = st.text_input("Search hall", value="", placeholder="Search hall name")
+    with filter_right:
+        only_booth_ready_halls = st.checkbox("Only booth-ready SKM halls", value=False)
 
-    base = alt.Chart(summary_df).encode(
+    filtered_summary_df = summary_df.copy()
+    if hall_query.strip():
+        filtered_summary_df = filtered_summary_df[
+            filtered_summary_df["hall"].astype(str).str.lower().str.contains(re.escape(hall_query.strip().lower()), regex=True)
+        ]
+    if only_booth_ready_halls and not skm_df.empty and "booth" in skm_df.columns:
+        booth_ready_halls = set(
+            skm_df.loc[
+                skm_df["booth"].fillna("").astype(str).str.strip().ne(""),
+                "hall",
+            ].fillna("").astype(str).str.strip().replace("", "Unknown Hall").tolist()
+        )
+        filtered_summary_df = filtered_summary_df[filtered_summary_df["hall"].isin(booth_ready_halls)]
+
+    if filtered_summary_df.empty:
+        st.info("No halls match the current hall filters.")
+        return
+
+    halls = filtered_summary_df["hall"].tolist()
+
+    base = alt.Chart(filtered_summary_df).encode(
         x=alt.X("map_col:O", axis=None, title=None),
         y=alt.Y("map_row:O", axis=None, title=None, sort="ascending"),
         tooltip=[
@@ -3068,9 +3092,9 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header:
     labels = base.mark_text(fontSize=13, fontWeight="bold", color="#252833", lineBreak="\n").encode(
         text="label:N"
     )
-    chart_height = max(240, int((summary_df["map_row"].max() + 1) * 95))
+    chart_height = max(240, int((filtered_summary_df["map_row"].max() + 1) * 95))
     st.altair_chart((heatmap + labels).properties(height=chart_height), use_container_width=True)
-    _render_hall_priority_strip(summary_df)
+    _render_hall_priority_strip(filtered_summary_df)
 
     st.markdown(
         """
