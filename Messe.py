@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-tab-counts-v41"
+APP_BUILD = "2026-04-28-hall-map-filter-controls-v42"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3269,11 +3269,26 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header:
     summary_df["label"] = summary_df["hall"].astype(str) + "\n" + summary_df["skm_leads"].astype(str) + " SKM"
     summary_df["countries_short"] = summary_df["countries"].astype(str).str.slice(0, 120)
     summary_df["exhibitors_short"] = summary_df["exhibitors"].astype(str).str.slice(0, 220)
-    filter_left, filter_right = st.columns([1.2, 0.8])
+    filter_left, filter_right, filter_action = st.columns([1.1, 0.8, 0.7])
     with filter_left:
-        hall_query = st.text_input("Search hall", value="", placeholder="Search hall name")
+        hall_query = st.text_input("Search hall", value="", placeholder="Search hall name", key="hall-map-search")
     with filter_right:
-        only_booth_ready_halls = st.checkbox("Only booth-ready SKM halls", value=False)
+        only_booth_ready_halls = st.checkbox("Only booth-ready SKM halls", value=False, key="hall-map-booth-ready")
+    with filter_action:
+        st.markdown("<div style='height: 1.7rem;'></div>", unsafe_allow_html=True)
+        if st.button("Reset filters", use_container_width=True, key="hall-map-reset"):
+            _reset_filter_state(
+                {
+                    "hall-map-search": "",
+                    "hall-map-booth-ready": False,
+                }
+            )
+    _render_active_filter_chips(
+        [
+            "Booth-ready halls only" if only_booth_ready_halls else "",
+            f"Search: {hall_query.strip()}" if hall_query.strip() else "",
+        ]
+    )
 
     filtered_summary_df = summary_df.copy()
     if hall_query.strip():
