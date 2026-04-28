@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-active-filter-chips-v40"
+APP_BUILD = "2026-04-28-tab-counts-v41"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3222,7 +3222,14 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         stem_suffix="hall_filtered",
     )
 
-    hall_tabs = st.tabs(["SKM Booth Board", "All Leads Booth Board", "SKM Table", "All Leads Table"])
+    hall_tabs = st.tabs(
+        [
+            f"SKM Booth Board ({len(hall_skm_filtered)})",
+            f"All Leads Booth Board ({len(hall_all_filtered)})",
+            f"SKM Table ({len(hall_skm_filtered)})",
+            f"All Leads Table ({len(hall_all_filtered)})",
+        ]
+    )
     with hall_tabs[0]:
         _render_section_header("Execution View", "SKM Booth Board", "The priority merchant board for in-hall follow-up.")
         _render_lead_cards(hall_skm_filtered, "No SKM leads match the current hall filters.")
@@ -3398,7 +3405,12 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 body="Export the exact Germany lead slice visible in this focus view, including booth-ready and search filters.",
                 stem_suffix="germany_filtered",
             )
-            focus_subtabs = st.tabs(["Germany SKM Leads", "Germany All Leads"])
+            focus_subtabs = st.tabs(
+                [
+                    f"Germany SKM Leads ({len(germany_skm_filtered)})",
+                    f"Germany All Leads ({len(germany_all_filtered)})",
+                ]
+            )
             with focus_subtabs[0]:
                 if germany_skm_filtered.empty:
                     st.info("No Germany-based SKM leads found for this fair.")
@@ -3464,7 +3476,12 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 body="Export the exact China lead slice visible in this focus view, including booth-ready and search filters.",
                 stem_suffix="china_filtered",
             )
-            focus_subtabs = st.tabs(["China SKM Leads", "China All Leads"])
+            focus_subtabs = st.tabs(
+                [
+                    f"China SKM Leads ({len(china_skm_filtered)})",
+                    f"China All Leads ({len(china_all_filtered)})",
+                ]
+            )
             with focus_subtabs[0]:
                 if china_skm_filtered.empty:
                     st.info("No China-based SKM leads found for this fair.")
@@ -3661,9 +3678,6 @@ def _render_results(result_df: pd.DataFrame) -> None:
     _render_section_header("Run Record", "Run Summary", "A compact record of the current fair run, including source URL and coverage totals.")
     _render_run_summary_panel(result_df)
 
-    tabs = ["SKM Exhibitor Leads", "All Exhibitor Leads"]
-    if not review_df.empty:
-        tabs.insert(1, "Possible Matches")
     _render_section_header("Lead Tables", "Lead Sheets", "Use the structured tables when you need full-list review, filtering, or export checks.")
     filter_left, filter_middle, filter_right, filter_action = st.columns([0.75, 0.9, 1.15, 0.7])
     with filter_left:
@@ -3708,6 +3722,9 @@ def _render_results(result_df: pd.DataFrame) -> None:
         search_query=search_query,
         focus_geography=focus_geography,
     )
+    tabs = [f"SKM Exhibitor Leads ({len(filtered_skm_df)})", f"All Exhibitor Leads ({len(filtered_all_df)})"]
+    if not review_df.empty:
+        tabs.insert(1, f"Possible Matches ({len(filtered_review_df)})")
     _render_filtered_live_counts(
         filtered_skm_df,
         filtered_review_df,
