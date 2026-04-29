@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-29-route-ordering-v52"
+APP_BUILD = "2026-04-29-run-timing-v53"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2535,12 +2535,44 @@ def _focus_country_rows(df: pd.DataFrame, country_key: str) -> pd.DataFrame:
     return df[_country_focus_mask(df["country"], country_key)].copy()
 
 
+def _format_runtime_seconds(seconds: Any) -> str:
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return "n/a"
+
+    if value < 60:
+        return f"{value:.1f}s"
+    minutes = int(value // 60)
+    remainder = int(round(value % 60))
+    if minutes < 60:
+        return f"{minutes}m {remainder:02d}s"
+    hours = minutes // 60
+    minute_part = minutes % 60
+    return f"{hours}h {minute_part:02d}m"
+
+
+def _runtime_band(seconds: Any) -> str:
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return "Unclassified"
+    if value < 15:
+        return "Fast Run"
+    if value < 60:
+        return "Standard Run"
+    if value < 180:
+        return "Extended Run"
+    return "Long Run"
+
+
 def run_summary_frame(
     all_df: pd.DataFrame,
     *,
     export_scope: str = "",
     active_filters: Optional[Sequence[str]] = None,
     scrape_warnings: Optional[Sequence[str]] = None,
+    run_metadata: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     total_rows = len(all_df)
     skm_df = skm_leads(all_df)
@@ -2561,8 +2593,13 @@ def run_summary_frame(
             source_values = [str(v).strip() for v in all_df["source_url"].fillna("").tolist() if str(v).strip()]
             source_url = source_values[0] if source_values else ""
 
+    run_metadata = dict(run_metadata or {})
+    run_date = str(run_metadata.get("completed_at") or time.strftime("%Y-%m-%d %H:%M:%S"))
+    runtime_seconds = run_metadata.get("elapsed_seconds")
+    runtime_band = str(run_metadata.get("runtime_band") or _runtime_band(runtime_seconds))
+
     rows = [
-        {"metric": "Run Date", "value": time.strftime("%Y-%m-%d %H:%M:%S")},
+        {"metric": "Run Date", "value": run_date},
         {"metric": "Source URL", "value": source_url},
         {"metric": "Total Exhibitor Rows", "value": total_rows},
         {"metric": "SKM Exhibitor Rows", "value": len(skm_df)},
@@ -2570,6 +2607,8 @@ def run_summary_frame(
         {"metric": "Unique Halls", "value": hall_count},
         {"metric": "Booth-level Rows", "value": booth_count},
         {"metric": "Source Countries", "value": country_count},
+        {"metric": "Run Time", "value": _format_runtime_seconds(runtime_seconds)},
+        {"metric": "Run Pace", "value": runtime_band},
     ]
     filter_labels = [str(label).strip() for label in (active_filters or []) if str(label).strip()]
     if export_scope:
@@ -2577,8 +2616,8 @@ def run_summary_frame(
     if filter_labels:
         rows.append({"metric": "Active Filters", "value": " | ".join(filter_labels)})
     warning_list = list(scrape_warnings or [])
-    rows.append({"metric": "Short Brief", "value": _build_short_field_brief(all_df, warning_list)})
-    rows.append({"metric": "Ops Brief", "value": _build_field_brief(all_df, warning_list)})
+    rows.append({"metric": "Short Brief", "value": _build_short_field_brief(all_df, warning_list, run_metadata=run_metadata)})
+    rows.append({"metric": "Ops Brief", "value": _build_field_brief(all_df, warning_list, run_metadata=run_metadata)})
     return pd.DataFrame(rows)
 
 
@@ -2588,6 +2627,7 @@ def build_excel_download(
     export_scope: str = "",
     active_filters: Optional[Sequence[str]] = None,
     scrape_warnings: Optional[Sequence[str]] = None,
+    run_metadata: Optional[Dict[str, Any]] = None,
 ) -> bytes:
     output = BytesIO()
     skm_df = sort_leads_by_hall(skm_leads(all_df))
@@ -2603,6 +2643,7 @@ def build_excel_download(
         export_scope=export_scope,
         active_filters=active_filters,
         scrape_warnings=scrape_warnings,
+        run_metadata=run_metadata,
     )
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -2800,10 +2841,15 @@ def _export_file_stem(result_df: pd.DataFrame) -> str:
     return f"{host}_{run_date}"
 
 
-def _render_downloads(result_df: pd.DataFrame, *, scrape_warnings: Optional[Sequence[str]] = None) -> None:
+def _render_downloads(
+    result_df: pd.DataFrame,
+    *,
+    scrape_warnings: Optional[Sequence[str]] = None,
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     ordered = order_columns(sort_leads_by_hall(result_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
-    excel_bytes = build_excel_download(ordered, scrape_warnings=scrape_warnings)
+    excel_bytes = build_excel_download(ordered, scrape_warnings=scrape_warnings, run_metadata=run_metadata)
     file_stem = _export_file_stem(ordered)
 
     dl1, dl2 = st.columns(2)
@@ -2831,6 +2877,7 @@ def _render_filtered_downloads(
     export_scope: str = "Filtered Lead Tables",
     active_filters: Optional[Sequence[str]] = None,
     scrape_warnings: Optional[Sequence[str]] = None,
+    run_metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
     ordered = order_columns(sort_leads_by_hall(filtered_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
@@ -2839,6 +2886,7 @@ def _render_filtered_downloads(
         export_scope=export_scope,
         active_filters=active_filters,
         scrape_warnings=scrape_warnings,
+        run_metadata=run_metadata,
     )
     file_stem = _export_file_stem(ordered)
 
@@ -2882,6 +2930,7 @@ def _render_filtered_downloads_with_context(
     export_scope: str,
     active_filters: Optional[Sequence[str]] = None,
     scrape_warnings: Optional[Sequence[str]] = None,
+    run_metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
     ordered = order_columns(sort_leads_by_hall(filtered_df))
     csv_bytes = ordered.to_csv(index=False).encode("utf-8-sig")
@@ -2890,6 +2939,7 @@ def _render_filtered_downloads_with_context(
         export_scope=export_scope,
         active_filters=active_filters,
         scrape_warnings=scrape_warnings,
+        run_metadata=run_metadata,
     )
     file_stem = _export_file_stem(ordered)
 
@@ -3296,7 +3346,13 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
         )
 
 
-def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataFrame) -> None:
+def _render_hall_drilldown(
+    hall: str,
+    skm_rows: pd.DataFrame,
+    all_rows: pd.DataFrame,
+    *,
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     hall_skm = _booth_sort_frame(_hall_filtered_rows(skm_rows, hall))
     hall_all = _booth_sort_frame(_hall_filtered_rows(all_rows, hall))
     skm_booth_count = _booth_coverage(hall_skm)
@@ -3404,6 +3460,7 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         export_scope=f"Selected Hall: {hall}",
         active_filters=hall_filter_labels,
         scrape_warnings=None,
+        run_metadata=run_metadata,
     )
 
     hall_tabs = st.tabs(
@@ -3434,7 +3491,13 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
             _render_lead_dataframe(order_columns(hall_all_filtered))
 
 
-def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header: bool = True) -> None:
+def _render_hall_map(
+    skm_df: pd.DataFrame,
+    all_df: pd.DataFrame,
+    *,
+    show_header: bool = True,
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     if show_header:
         _render_section_header("Hall Intelligence", "SKM Hall Heatmap", "See where SKM density is concentrated, then drill into one hall at a time.")
     if skm_df.empty:
@@ -3534,10 +3597,15 @@ def _render_hall_map(skm_df: pd.DataFrame, all_df: pd.DataFrame, *, show_header:
     )
     selected_hall_label = st.selectbox("Choose a hall to open the detailed operating view", hall_options, label_visibility="collapsed")
     selected_hall = selected_hall_label.rsplit(" (", 1)[0]
-    _render_hall_drilldown(selected_hall, skm_df, all_df)
+    _render_hall_drilldown(selected_hall, skm_df, all_df, run_metadata=run_metadata)
 
 
-def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> None:
+def _render_country_intelligence(
+    skm_df: pd.DataFrame,
+    all_df: pd.DataFrame,
+    *,
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     _render_section_header("Country Intelligence", "Source Country Breakdown", "Classify exhibitors by source country so you can see where the fair supply base is concentrated.")
     skm_country_df = country_summary(skm_df, row_label="skm_rows")
     all_country_df = country_summary(all_df, row_label="lead_rows")
@@ -3623,6 +3691,7 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 export_scope="Focus Country: Germany",
                 active_filters=germany_filter_labels,
                 scrape_warnings=None,
+                run_metadata=run_metadata,
             )
             focus_subtabs = st.tabs(
                 [
@@ -3701,6 +3770,7 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
                 export_scope="Focus Country: China",
                 active_filters=china_filter_labels,
                 scrape_warnings=None,
+                run_metadata=run_metadata,
             )
             focus_subtabs = st.tabs(
                 [
@@ -3730,8 +3800,8 @@ def _render_country_intelligence(skm_df: pd.DataFrame, all_df: pd.DataFrame) -> 
             st.dataframe(all_country_df, use_container_width=True, hide_index=True)
 
 
-def _render_run_summary_panel(result_df: pd.DataFrame) -> None:
-    summary_df = run_summary_frame(result_df)
+def _render_run_summary_panel(result_df: pd.DataFrame, *, run_metadata: Optional[Dict[str, Any]] = None) -> None:
+    summary_df = run_summary_frame(result_df, run_metadata=run_metadata)
     st.markdown(
         """
         <div class="dashboard-note">
@@ -3897,7 +3967,11 @@ def _infer_run_strategy(result_df: pd.DataFrame, scrape_warnings: Sequence[str])
     return "Auto Strategy"
 
 
-def _render_run_diagnostics(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> None:
+def _render_run_diagnostics(
+    result_df: pd.DataFrame,
+    scrape_warnings: Sequence[str],
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     total_rows = len(result_df)
     hall_count = 0
     booth_rows = 0
@@ -3914,6 +3988,8 @@ def _render_run_diagnostics(result_df: pd.DataFrame, scrape_warnings: Sequence[s
     booth_coverage = (booth_rows / total_rows * 100) if total_rows else 0.0
     strategy = _infer_run_strategy(result_df, scrape_warnings)
     warning_count = len(scrape_warnings)
+    runtime_seconds = (run_metadata or {}).get("elapsed_seconds")
+    runtime_band = str((run_metadata or {}).get("runtime_band") or _runtime_band(runtime_seconds))
 
     st.markdown(
         f"""
@@ -3921,6 +3997,7 @@ def _render_run_diagnostics(result_df: pd.DataFrame, scrape_warnings: Sequence[s
             <div class="dashboard-note-title">Run Diagnostics</div>
             <div class="dashboard-note-body">
                 Strategy <strong>{html.escape(strategy)}</strong> with {warning_count} warning(s) recorded during capture.
+                Runtime {html.escape(_format_runtime_seconds(runtime_seconds))} in the current <strong>{html.escape(runtime_band)}</strong> band.
             </div>
         </div>
         """,
@@ -3949,13 +4026,22 @@ def _render_run_diagnostics(result_df: pd.DataFrame, scrape_warnings: Sequence[s
                 <div class="summary-ribbon-value">{country_count}</div>
                 <div class="summary-ribbon-caption">Source countries represented in the current operating list.</div>
             </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Run Time</div>
+                <div class="summary-ribbon-value">{html.escape(_format_runtime_seconds(runtime_seconds))}</div>
+                <div class="summary-ribbon-caption">{html.escape(runtime_band)} based on end-to-end scrape and match time.</div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-def _build_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> str:
+def _build_field_brief(
+    result_df: pd.DataFrame,
+    scrape_warnings: Sequence[str],
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> str:
     total_rows = len(result_df)
     skm_df = sort_leads_by_hall(skm_leads(result_df))
     review_df = sort_leads_by_hall(review_leads(result_df))
@@ -3976,6 +4062,8 @@ def _build_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) 
 
     if "booth" in result_df.columns:
         booth_ready_rows = int(result_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
+    runtime_seconds = (run_metadata or {}).get("elapsed_seconds")
+    runtime_text = _format_runtime_seconds(runtime_seconds)
 
     source_url = ""
     if "source_url" in result_df.columns:
@@ -3989,11 +4077,15 @@ def _build_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) 
         f"{host}: {total_rows} lead rows captured, {len(skm_df)} SKM rows identified, "
         f"{len(review_df)} possible matches, capture mode {strategy}, top hall {top_hall}, "
         f"top source country {top_country}, top halls [{top_halls_text}], top source countries [{top_countries_text}], "
-        f"booth-ready rows {booth_ready_rows}, warnings {len(scrape_warnings)}."
+        f"booth-ready rows {booth_ready_rows}, runtime {runtime_text}, warnings {len(scrape_warnings)}."
     )
 
 
-def _build_short_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> str:
+def _build_short_field_brief(
+    result_df: pd.DataFrame,
+    scrape_warnings: Sequence[str],
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> str:
     total_rows = len(result_df)
     skm_df = sort_leads_by_hall(skm_leads(result_df))
     strategy = _infer_run_strategy(result_df, scrape_warnings)
@@ -4013,13 +4105,18 @@ def _build_short_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[
     host = urlparse(source_url).netloc.lower()
     host = re.sub(r"^www\.", "", host)
     host = host or "fair site"
+    runtime_text = _format_runtime_seconds((run_metadata or {}).get("elapsed_seconds"))
 
-    return f"{host}: {total_rows} rows / {len(skm_df)} SKM / top hall {top_hall} / top country {top_country} / mode {strategy}."
+    return f"{host}: {total_rows} rows / {len(skm_df)} SKM / top hall {top_hall} / top country {top_country} / mode {strategy} / runtime {runtime_text}."
 
 
-def _render_field_brief(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> None:
-    short_brief = _build_short_field_brief(result_df, scrape_warnings)
-    brief_text = _build_field_brief(result_df, scrape_warnings)
+def _render_field_brief(
+    result_df: pd.DataFrame,
+    scrape_warnings: Sequence[str],
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    short_brief = _build_short_field_brief(result_df, scrape_warnings, run_metadata=run_metadata)
+    brief_text = _build_field_brief(result_df, scrape_warnings, run_metadata=run_metadata)
     st.markdown(
         """
         <div class="dashboard-note">
@@ -4083,7 +4180,11 @@ def _apply_lead_table_filters(df: pd.DataFrame, *, only_with_booth: bool, search
     return working
 
 
-def _render_results(result_df: pd.DataFrame, scrape_warnings: Optional[Sequence[str]] = None) -> None:
+def _render_results(
+    result_df: pd.DataFrame,
+    scrape_warnings: Optional[Sequence[str]] = None,
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     scrape_warnings = list(scrape_warnings or [])
     summary = summarize_matches(_safe_records(result_df))
     skm_df = sort_leads_by_hall(skm_leads(result_df))
@@ -4097,13 +4198,13 @@ def _render_results(result_df: pd.DataFrame, scrape_warnings: Optional[Sequence[
     metric_cols[2].metric("Needs Review", summary["review"])
     _render_summary_ribbon(all_sorted, skm_df)
     _render_overview_spotlights(skm_df)
-    _render_run_diagnostics(result_df, scrape_warnings)
-    _render_field_brief(result_df, scrape_warnings)
+    _render_run_diagnostics(result_df, scrape_warnings, run_metadata=run_metadata)
+    _render_field_brief(result_df, scrape_warnings, run_metadata=run_metadata)
 
     action_left, action_right = st.columns([1.2, 1])
     with action_left:
         st.markdown('<div class="summary-actions">', unsafe_allow_html=True)
-        _render_downloads(result_df, scrape_warnings=scrape_warnings)
+        _render_downloads(result_df, scrape_warnings=scrape_warnings, run_metadata=run_metadata)
         st.markdown("</div>", unsafe_allow_html=True)
     with action_right:
         st.markdown(
@@ -4120,10 +4221,10 @@ def _render_results(result_df: pd.DataFrame, scrape_warnings: Optional[Sequence[
         )
 
     _render_section_header("Hall Intelligence", "SKM Hall Map", "Start with hall concentration, then move into the selected hall for booth-level execution.")
-    _render_hall_map(skm_df, all_sorted, show_header=False)
-    _render_country_intelligence(skm_df, all_sorted)
+    _render_hall_map(skm_df, all_sorted, show_header=False, run_metadata=run_metadata)
+    _render_country_intelligence(skm_df, all_sorted, run_metadata=run_metadata)
     _render_section_header("Run Record", "Run Summary", "A compact record of the current fair run, including source URL and coverage totals.")
-    _render_run_summary_panel(result_df)
+    _render_run_summary_panel(result_df, run_metadata=run_metadata)
 
     _render_section_header("Lead Tables", "Lead Sheets", "Use the structured tables when you need full-list review, filtering, or export checks.")
     filter_left, filter_middle, filter_right, filter_action = st.columns([0.75, 0.9, 1.15, 0.7])
@@ -4187,6 +4288,7 @@ def _render_results(result_df: pd.DataFrame, scrape_warnings: Optional[Sequence[
         export_scope="Filtered Lead Tables",
         active_filters=lead_filter_labels,
         scrape_warnings=scrape_warnings,
+        run_metadata=run_metadata,
     )
     rendered_tabs = st.tabs(tabs)
     tab_skm = rendered_tabs[0]
@@ -5074,6 +5176,7 @@ def main() -> None:
     result_state_key = "last_result_df"
     warning_state_key = "last_scrape_warnings"
     signature_state_key = "last_run_signature"
+    metadata_state_key = "last_run_metadata"
 
     if run:
         config = ScrapeConfig(
@@ -5116,6 +5219,7 @@ def main() -> None:
         )
 
         try:
+            run_started_at = time.time()
             with st.status("Scraping exhibitors...", expanded=True) as status:
                 if html_upload is not None:
                     html = _read_html(html_upload)
@@ -5150,7 +5254,9 @@ def main() -> None:
                     threshold=float(threshold),
                     review_margin=float(review_margin),
                 )
+                elapsed_seconds = time.time() - run_started_at
                 status.write("SKM matching complete")
+                status.write(f"Run completed in {_format_runtime_seconds(elapsed_seconds)} ({_runtime_band(elapsed_seconds)}).")
                 status.update(label="Complete", state="complete", expanded=False)
 
             if not matched:
@@ -5161,6 +5267,11 @@ def main() -> None:
             st.session_state[result_state_key] = result_df
             st.session_state[warning_state_key] = scrape_warnings
             st.session_state[signature_state_key] = run_signature
+            st.session_state[metadata_state_key] = {
+                "elapsed_seconds": round(float(elapsed_seconds), 2),
+                "runtime_band": _runtime_band(elapsed_seconds),
+                "completed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
 
         except ScrapeError as exc:
             st.error(str(exc))
@@ -5169,13 +5280,14 @@ def main() -> None:
 
     if result_state_key in st.session_state:
         scrape_warnings = st.session_state.get(warning_state_key, [])
+        run_metadata = st.session_state.get(metadata_state_key, {})
         if scrape_warnings:
             with st.expander("Scrape warnings"):
                 for warning in scrape_warnings[:25]:
                     st.warning(warning)
                 if len(scrape_warnings) > 25:
                     st.warning(f"...and {len(scrape_warnings) - 25} more skipped pages.")
-        _render_results(st.session_state[result_state_key], scrape_warnings=scrape_warnings)
+        _render_results(st.session_state[result_state_key], scrape_warnings=scrape_warnings, run_metadata=run_metadata)
 
 
 if __name__ == "__main__":
