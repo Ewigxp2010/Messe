@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-28-brief-sheet-v51"
+APP_BUILD = "2026-04-29-route-ordering-v52"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2365,13 +2365,93 @@ def order_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df[first]
 
 
+def _natural_text_parts(value: Any) -> Tuple[Any, ...]:
+    text = _clean_text(value)
+    if not text:
+        return tuple()
+    parts: List[Any] = []
+    for token in re.split(r"(\d+)", text.lower()):
+        if not token:
+            continue
+        parts.append(int(token) if token.isdigit() else token)
+    return tuple(parts)
+
+
+def _hall_sort_key(value: Any) -> Tuple[int, Tuple[Any, ...]]:
+    text = _clean_text(value)
+    if not text or text.lower() == "unknown hall":
+        return (1, ("unknown hall",))
+
+    normalized = text.lower()
+    normalized = normalized.replace("halle", "hall")
+    normalized = normalized.replace("hall ", "")
+    normalized = normalized.replace("hall", "")
+    normalized = normalized.strip(" -_/")
+    return (0, _natural_text_parts(normalized or text))
+
+
+def _booth_sort_key(value: Any) -> Tuple[int, Tuple[Any, ...]]:
+    text = _clean_text(value)
+    if not text:
+        return (1, ("zzzz",))
+    normalized = text.lower().replace("stand", "").replace("booth", "").strip(" -_/")
+    return (0, _natural_text_parts(normalized or text))
+
+
+def _apply_natural_lead_sort(df: pd.DataFrame, *, booth_first: bool = False) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    working = df.copy()
+    exhibitor_values = (
+        working["exhibitor_name"].fillna("").astype(str).str.strip()
+        if "exhibitor_name" in working.columns
+        else pd.Series("", index=working.index)
+    )
+    hall_values = (
+        working["hall"].fillna("").astype(str).str.strip().replace("", "Unknown Hall")
+        if "hall" in working.columns
+        else pd.Series("Unknown Hall", index=working.index)
+    )
+    booth_values = (
+        working["booth"].fillna("").astype(str).str.strip()
+        if "booth" in working.columns
+        else pd.Series("", index=working.index)
+    )
+    working["_sort_hall_display"] = hall_values
+    working["_sort_hall_key"] = hall_values.map(_hall_sort_key)
+    working["_sort_has_booth"] = booth_values.ne("")
+    working["_sort_booth_display"] = booth_values
+    working["_sort_booth_key"] = booth_values.map(_booth_sort_key)
+    working["_sort_exhibitor_key"] = exhibitor_values.map(_natural_text_parts)
+
+    sort_cols = ["_sort_hall_key", "_sort_booth_key", "_sort_exhibitor_key"]
+    ascending = [True, True, True]
+    if booth_first:
+        sort_cols = ["_sort_has_booth"] + sort_cols
+        ascending = [False] + ascending
+
+    working = working.sort_values(sort_cols, ascending=ascending, kind="stable")
+    return working.drop(
+        columns=[
+            col
+            for col in [
+                "_sort_hall_display",
+                "_sort_hall_key",
+                "_sort_has_booth",
+                "_sort_booth_display",
+                "_sort_booth_key",
+                "_sort_exhibitor_key",
+            ]
+            if col in working.columns
+        ]
+    )
+
+
 def sort_leads_by_hall(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    sort_cols = [col for col in ["hall", "booth", "exhibitor_name"] if col in df.columns]
-    if not sort_cols:
-        return df
-    return df.sort_values(sort_cols, kind="stable")
+    return _apply_natural_lead_sort(df, booth_first=False)
 
 
 def skm_leads(df: pd.DataFrame) -> pd.DataFrame:
@@ -2860,14 +2940,60 @@ def _booth_coverage(df: pd.DataFrame) -> int:
 def _booth_sort_frame(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    working = df.copy()
-    booth_values = working["booth"].fillna("").astype(str).str.strip() if "booth" in working.columns else pd.Series("", index=working.index)
-    working["_has_booth"] = booth_values.ne("")
-    working["_booth_sort"] = booth_values
-    sort_cols = [col for col in ["_has_booth", "hall", "_booth_sort", "exhibitor_name"] if col in working.columns]
-    ascending = [False, True, True, True][: len(sort_cols)]
-    working = working.sort_values(sort_cols, ascending=ascending, kind="stable")
-    return working.drop(columns=[col for col in ["_has_booth", "_booth_sort"] if col in working.columns])
+    return _apply_natural_lead_sort(df, booth_first=True)
+
+
+def _build_route_hint(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    if df.empty:
+        return None
+
+    booth_ready = df.copy()
+    if "booth" in booth_ready.columns:
+        booth_ready = booth_ready[booth_ready["booth"].fillna("").astype(str).str.strip().ne("")]
+    if booth_ready.empty:
+        return None
+
+    ordered = _booth_sort_frame(booth_ready)
+    sample = ordered.head(6)
+    booth_sequence = [str(value).strip() for value in sample["booth"].tolist() if str(value).strip()]
+    if not booth_sequence:
+        return None
+
+    country_count = 0
+    if "country" in ordered.columns:
+        country_count = int(
+            ordered["country"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()
+        )
+
+    return {
+        "count": len(ordered),
+        "booth_sequence": booth_sequence,
+        "country_count": country_count,
+    }
+
+
+def _render_route_hint(route_hint: Optional[Dict[str, Any]]) -> None:
+    if not route_hint:
+        return
+
+    booth_path = " -> ".join(route_hint["booth_sequence"])
+    country_copy = (
+        f"across {route_hint['country_count']} source market(s)"
+        if route_hint["country_count"]
+        else "across the currently visible lead slice"
+    )
+    st.markdown(
+        f"""
+        <div class="dashboard-note">
+            <div class="dashboard-note-title">Suggested Booth Sequence</div>
+            <div class="dashboard-note-body">
+                Start with the booth-ready SKM list in this order: <strong>{html.escape(booth_path)}</strong>.<br/>
+                This route is built from {int(route_hint["count"])} booth-ready SKM row(s) {html.escape(country_copy)}.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_hall_snapshot_card(title: str, value: int, caption: str) -> None:
@@ -3269,6 +3395,7 @@ def _render_hall_drilldown(hall: str, skm_rows: pd.DataFrame, all_rows: pd.DataF
         title="Current Hall Scope",
         caption="A compact view of the lead coverage still visible inside this selected hall.",
     )
+    _render_route_hint(_build_route_hint(hall_skm_filtered if not hall_skm_filtered.empty else hall_all_filtered))
     _render_filtered_downloads_with_context(
         hall_all_filtered,
         title="Hall Export",
