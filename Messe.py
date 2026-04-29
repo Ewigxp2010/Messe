@@ -29,7 +29,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-29-run-timing-v53"
+APP_BUILD = "2026-04-29-run-health-v54"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2566,6 +2566,71 @@ def _runtime_band(seconds: Any) -> str:
     return "Long Run"
 
 
+def _diagnostic_metrics(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> Dict[str, Any]:
+    total_rows = len(result_df)
+    hall_count = 0
+    booth_rows = 0
+    country_count = 0
+    if total_rows:
+        if "hall" in result_df.columns:
+            hall_count = int(result_df["hall"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+        if "booth" in result_df.columns:
+            booth_rows = int(result_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
+        if "country" in result_df.columns:
+            country_count = int(result_df["country"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+
+    hall_coverage = (hall_count / total_rows * 100) if total_rows else 0.0
+    booth_coverage = (booth_rows / total_rows * 100) if total_rows else 0.0
+    strategy = _infer_run_strategy(result_df, scrape_warnings)
+    warning_count = len(scrape_warnings)
+
+    return {
+        "total_rows": total_rows,
+        "hall_count": hall_count,
+        "booth_rows": booth_rows,
+        "country_count": country_count,
+        "hall_coverage": hall_coverage,
+        "booth_coverage": booth_coverage,
+        "strategy": strategy,
+        "warning_count": warning_count,
+    }
+
+
+def _health_signal(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> Dict[str, str]:
+    metrics = _diagnostic_metrics(result_df, scrape_warnings)
+    total_rows = int(metrics["total_rows"])
+    hall_coverage = float(metrics["hall_coverage"])
+    booth_coverage = float(metrics["booth_coverage"])
+    warning_count = int(metrics["warning_count"])
+
+    if total_rows == 0:
+        return {
+            "label": "Needs Attention",
+            "tone": "alert",
+            "reason": "No lead rows were captured in the current run.",
+        }
+
+    if hall_coverage >= 85 and booth_coverage >= 65 and warning_count <= 2:
+        return {
+            "label": "Healthy",
+            "tone": "healthy",
+            "reason": "Hall and booth coverage look strong, with limited scrape warnings.",
+        }
+
+    if hall_coverage >= 60 and booth_coverage >= 35 and warning_count <= 8:
+        return {
+            "label": "Review",
+            "tone": "review",
+            "reason": "The run is usable, but coverage or warning volume suggests a quick sanity check.",
+        }
+
+    return {
+        "label": "Partial",
+        "tone": "partial",
+        "reason": "Coverage is thin or warnings are elevated, so this run likely needs validation.",
+    }
+
+
 def run_summary_frame(
     all_df: pd.DataFrame,
     *,
@@ -2597,6 +2662,7 @@ def run_summary_frame(
     run_date = str(run_metadata.get("completed_at") or time.strftime("%Y-%m-%d %H:%M:%S"))
     runtime_seconds = run_metadata.get("elapsed_seconds")
     runtime_band = str(run_metadata.get("runtime_band") or _runtime_band(runtime_seconds))
+    health = _health_signal(all_df, scrape_warnings or [])
 
     rows = [
         {"metric": "Run Date", "value": run_date},
@@ -2609,6 +2675,8 @@ def run_summary_frame(
         {"metric": "Source Countries", "value": country_count},
         {"metric": "Run Time", "value": _format_runtime_seconds(runtime_seconds)},
         {"metric": "Run Pace", "value": runtime_band},
+        {"metric": "Run Health", "value": health["label"]},
+        {"metric": "Health Note", "value": health["reason"]},
     ]
     filter_labels = [str(label).strip() for label in (active_filters or []) if str(label).strip()]
     if export_scope:
@@ -3972,24 +4040,17 @@ def _render_run_diagnostics(
     scrape_warnings: Sequence[str],
     run_metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
-    total_rows = len(result_df)
-    hall_count = 0
-    booth_rows = 0
-    country_count = 0
-    if total_rows:
-        if "hall" in result_df.columns:
-            hall_count = int(result_df["hall"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
-        if "booth" in result_df.columns:
-            booth_rows = int(result_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
-        if "country" in result_df.columns:
-            country_count = int(result_df["country"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
-
-    hall_coverage = (hall_count / total_rows * 100) if total_rows else 0.0
-    booth_coverage = (booth_rows / total_rows * 100) if total_rows else 0.0
-    strategy = _infer_run_strategy(result_df, scrape_warnings)
-    warning_count = len(scrape_warnings)
+    metrics = _diagnostic_metrics(result_df, scrape_warnings)
+    hall_count = int(metrics["hall_count"])
+    booth_rows = int(metrics["booth_rows"])
+    country_count = int(metrics["country_count"])
+    hall_coverage = float(metrics["hall_coverage"])
+    booth_coverage = float(metrics["booth_coverage"])
+    strategy = str(metrics["strategy"])
+    warning_count = int(metrics["warning_count"])
     runtime_seconds = (run_metadata or {}).get("elapsed_seconds")
     runtime_band = str((run_metadata or {}).get("runtime_band") or _runtime_band(runtime_seconds))
+    health = _health_signal(result_df, scrape_warnings)
 
     st.markdown(
         f"""
@@ -4006,6 +4067,11 @@ def _render_run_diagnostics(
     st.markdown(
         f"""
         <div class="summary-ribbon summary-ribbon-compact">
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Run Health</div>
+                <div class="summary-ribbon-value"><span class="health-chip {html.escape(health['tone'])}">{html.escape(health['label'])}</span></div>
+                <div class="summary-ribbon-caption">{html.escape(health['reason'])}</div>
+            </div>
             <div class="summary-ribbon-card">
                 <div class="summary-ribbon-title">Capture Mode</div>
                 <div class="summary-ribbon-value">{html.escape(strategy)}</div>
@@ -4626,6 +4692,35 @@ def _inject_app_css() -> None:
             color: #5d6575;
             font-size: 0.86rem;
             line-height: 1.35;
+        }
+        .health-chip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 32px;
+            padding: 0 11px;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            border: 1px solid transparent;
+            white-space: nowrap;
+        }
+        .health-chip.healthy {
+            background: rgba(16, 185, 129, 0.10);
+            color: #047857;
+            border-color: rgba(4, 120, 87, 0.12);
+        }
+        .health-chip.review {
+            background: rgba(245, 158, 11, 0.12);
+            color: #b45309;
+            border-color: rgba(180, 83, 9, 0.14);
+        }
+        .health-chip.partial,
+        .health-chip.alert {
+            background: rgba(245, 94, 66, 0.10);
+            color: #a44733;
+            border-color: rgba(164, 71, 51, 0.14);
         }
         .summary-actions {
             margin: 10px 0 6px 0;
