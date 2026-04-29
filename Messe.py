@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-29-unified-console-v58"
+APP_BUILD = "2026-04-29-command-dock-v59"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -4440,10 +4440,44 @@ def _inject_app_css() -> None:
         section[data-testid="stSidebar"] .block-container {
             padding-top: 1.05rem;
         }
+        section[data-testid="stSidebar"] h2 {
+            color: #1f2330;
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: 0;
+        }
         section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
         section[data-testid="stSidebar"] label,
         section[data-testid="stSidebar"] .stCaption {
             color: #596274;
+        }
+        .sidebar-shell {
+            background: rgba(255,255,255,0.82);
+            border: 1px solid rgba(25, 28, 38, 0.055);
+            border-radius: 16px;
+            padding: 12px 12px 10px;
+            box-shadow: 0 10px 22px rgba(15,23,42,0.022);
+            margin: 0 0 12px 0;
+        }
+        .sidebar-shell-kicker {
+            color: #7b818f;
+            font-size: 0.74rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 6px;
+        }
+        .sidebar-shell-title {
+            color: #1f2330;
+            font-size: 0.95rem;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 4px;
+        }
+        .sidebar-shell-copy {
+            color: #5d6575;
+            font-size: 0.85rem;
+            line-height: 1.42;
         }
         div[data-testid="stMetric"] {
             background: rgba(255, 255, 255, 0.96);
@@ -4752,6 +4786,14 @@ def _inject_app_css() -> None:
             box-shadow: 0 18px 38px rgba(15, 23, 42, 0.04);
             margin: 4px 0 16px 0;
         }
+        .launch-dock {
+            background: linear-gradient(180deg, rgba(255,255,255,0.985) 0%, rgba(250, 251, 253, 0.985) 100%);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 20px;
+            padding: 18px 18px 16px;
+            box-shadow: 0 18px 38px rgba(15, 23, 42, 0.04);
+            margin: 0 0 14px 0;
+        }
         .launch-kicker {
             color: #7b818f;
             font-size: 0.76rem;
@@ -4773,6 +4815,29 @@ def _inject_app_css() -> None:
             line-height: 1.45;
             margin-bottom: 10px;
             max-width: 840px;
+        }
+        .launch-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .launch-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 8px 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.9);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            color: #556071;
+            font-size: 0.82rem;
+            line-height: 1;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.74);
+        }
+        .launch-chip strong {
+            color: #1f2330;
+            font-weight: 700;
         }
         .overview-shell {
             background: linear-gradient(180deg, rgba(255,255,255,0.985) 0%, rgba(251,252,254,0.985) 100%);
@@ -5470,10 +5535,42 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
     )
 
 
+def _render_sidebar_shell(kicker: str, title: str, copy: str) -> None:
+    _render_html_block(
+        f"""
+        <div class="sidebar-shell">
+            <div class="sidebar-shell-kicker">{html.escape(kicker)}</div>
+            <div class="sidebar-shell-title">{html.escape(title)}</div>
+            <div class="sidebar-shell-copy">{html.escape(copy)}</div>
+        </div>
+        """
+    )
+
+
+def _render_launch_dock() -> None:
+    _render_html_block(
+        """
+        <div class="launch-dock">
+            <div class="launch-kicker">Command Dock</div>
+            <div class="launch-title">Launch a fair run</div>
+            <div class="launch-caption">
+                Start from the public exhibitor directory, let the console resolve the best scrape path, and move straight into hall-level operating views when the run completes.
+            </div>
+            <div class="launch-chip-row">
+                <div class="launch-chip"><strong>Step 1</strong> Add the fair URL</div>
+                <div class="launch-chip"><strong>Step 2</strong> Let the first run finish</div>
+                <div class="launch-chip"><strong>Step 3</strong> Work by hall and booth</div>
+            </div>
+        </div>
+        """
+    )
+
+
 def main() -> None:
     _inject_app_css()
 
     with st.sidebar:
+        _render_sidebar_shell("Control Rail", "SKM Base", "Use the built-in SKM pool by default, or swap in a different list only when you intentionally need another merchant base.")
         st.header("1. SKM List")
         st.caption("The built-in SKM base is used by default.")
         has_builtin_skm = BUILTIN_SKM_PATH.exists()
@@ -5519,6 +5616,7 @@ def main() -> None:
             except Exception as exc:
                 st.error(f"Failed to read SKM file: {exc}")
 
+        _render_sidebar_shell("Scrape Controls", "Fair Capture Settings", "Adjust page depth, discovery behavior, and detail-page crawling when a fair site needs a more deliberate capture pass.")
         st.header("2. Scraping Settings")
         max_pages = st.number_input("Maximum pages to scrape", min_value=1, max_value=200, value=100, step=1)
         auto_discover_exhibitor_directory = st.checkbox("Auto-detect exhibitor directory from homepage", value=True)
@@ -5541,6 +5639,7 @@ def main() -> None:
         )
 
     _render_onboarding(has_builtin_skm)
+    _render_launch_dock()
 
     _render_html_block(
         """
