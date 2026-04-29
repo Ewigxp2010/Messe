@@ -5,6 +5,7 @@ import hashlib
 import html
 import math
 import re
+import textwrap
 import time
 import unicodedata
 import xml.etree.ElementTree as ET
@@ -29,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-29-run-health-v54"
+APP_BUILD = "2026-04-29-html-render-fix-v55"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3100,7 +3101,7 @@ def _render_route_hint(route_hint: Optional[Dict[str, Any]]) -> None:
         if route_hint["country_count"]
         else "across the currently visible lead slice"
     )
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="dashboard-note">
             <div class="dashboard-note-title">Suggested Booth Sequence</div>
@@ -3109,35 +3110,36 @@ def _render_route_hint(route_hint: Optional[Dict[str, Any]]) -> None:
                 This route is built from {int(route_hint["count"])} booth-ready SKM row(s) {html.escape(country_copy)}.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
 def _render_hall_snapshot_card(title: str, value: int, caption: str) -> None:
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="hall-stat-card">
             <div class="hall-stat-title">{title}</div>
             <div class="hall-stat-value">{value}</div>
             <div class="hall-stat-caption">{caption}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
+
+
+def _render_html_block(markup: str) -> None:
+    st.markdown(textwrap.dedent(markup).strip(), unsafe_allow_html=True)
 
 
 def _render_section_header(eyebrow: str, title: str, description: str = "") -> None:
     description_html = f'<div class="section-description">{description}</div>' if description else ""
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="section-header">
             <div class="section-eyebrow">{eyebrow}</div>
             <div class="section-title">{title}</div>
             {description_html}
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -3154,7 +3156,7 @@ def _render_summary_ribbon(result_df: pd.DataFrame, skm_df: pd.DataFrame) -> Non
             booth_rows = int(result_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
         skm_share = (len(skm_df) / total_rows) * 100
 
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="summary-ribbon">
             <div class="summary-ribbon-card">
@@ -3173,8 +3175,7 @@ def _render_summary_ribbon(result_df: pd.DataFrame, skm_df: pd.DataFrame) -> Non
                 <div class="summary-ribbon-caption">Share of captured lead rows currently mapped to priority merchants.</div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -3197,13 +3198,12 @@ def _render_hall_priority_strip(summary_df: pd.DataFrame) -> None:
             """
         )
 
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="hall-priority-strip">
             {''.join(cards)}
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -3228,13 +3228,12 @@ def _render_country_priority_strip(summary_df: pd.DataFrame, row_label: str) -> 
             """
         )
 
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="hall-priority-strip">
             {''.join(cards)}
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -3387,7 +3386,7 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
                     link_parts.append(f'<a class="booth-card-link" href="{html.escape(website, quote=True)}" target="_blank">Website</a>')
                 links_html = f'<div class="booth-card-links">{"".join(link_parts)}</div>' if link_parts else ""
 
-                st.markdown(
+                _render_html_block(
                     f"""
                     <div class="booth-card">
                         <div class="booth-card-top">
@@ -3403,14 +3402,12 @@ def _render_lead_cards(df: pd.DataFrame, empty_message: str) -> None:
                         </div>
                         {links_html}
                     </div>
-                    """,
-                    unsafe_allow_html=True,
+                    """
                 )
 
     if len(records) > rows_to_show:
-        st.markdown(
-            f'<div class="lead-card-stack-note">Showing the first {rows_to_show} leads in card view. Use the table tabs for the full hall list.</div>',
-            unsafe_allow_html=True,
+        _render_html_block(
+            f'<div class="lead-card-stack-note">Showing the first {rows_to_show} leads in card view. Use the table tabs for the full hall list.</div>'
         )
 
 
@@ -3430,15 +3427,14 @@ def _render_hall_drilldown(
         countries = sorted({str(v) for v in hall_all["country"].fillna("") if str(v).strip()})
 
     coverage_note = f"{len(hall_skm)} priority merchant row(s) and {len(hall_all)} total lead row(s) are currently mapped into this hall."
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="hall-drilldown-shell">
             <div class="hall-drilldown-topline">Selected Hall</div>
             <div class="hall-drilldown-title">{hall}</div>
             <div class="hall-drilldown-subtitle">{coverage_note}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
     stat_cols = st.columns(4)
     with stat_cols[0]:
@@ -3454,7 +3450,7 @@ def _render_hall_drilldown(
         country_chips = "".join([f'<span class="country-chip">{country}</span>' for country in countries[:10]])
         if len(countries) > 10:
             country_chips += f'<span class="country-chip country-chip-more">+{len(countries) - 10} more</span>'
-        st.markdown(f'<div class="country-chip-row">{country_chips}</div>', unsafe_allow_html=True)
+        _render_html_block(f'<div class="country-chip-row">{country_chips}</div>')
 
     filter_left, filter_middle, filter_right, filter_action = st.columns([1.0, 0.85, 0.75, 0.7])
     with filter_left:
@@ -3654,14 +3650,13 @@ def _render_hall_map(
     st.altair_chart((heatmap + labels).properties(height=chart_height), use_container_width=True)
     _render_hall_priority_strip(filtered_summary_df)
 
-    st.markdown(
+    _render_html_block(
         """
         <div class="map-select-shell">
             <div class="map-select-title">Detailed Operating View</div>
             <div class="map-select-caption">Open one hall at a time to move from heatmap signal into booth-level execution.</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
     selected_hall_label = st.selectbox("Choose a hall to open the detailed operating view", hall_options, label_visibility="collapsed")
     selected_hall = selected_hall_label.rsplit(" (", 1)[0]
@@ -3934,13 +3929,12 @@ def _render_filtered_live_counts(
             """
         )
 
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="summary-ribbon summary-ribbon-compact">
             {''.join(card_markup)}
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -3955,7 +3949,7 @@ def _render_active_filter_chips(labels: Sequence[str]) -> None:
     if not chips:
         return
     chips_html = "".join([f'<span class="country-chip">{html.escape(str(label))}</span>' for label in chips])
-    st.markdown(f'<div class="country-chip-row country-chip-row-tight">{chips_html}</div>', unsafe_allow_html=True)
+    _render_html_block(f'<div class="country-chip-row country-chip-row-tight">{chips_html}</div>')
 
 
 def _render_current_scope(df: pd.DataFrame, title: str, caption: str) -> None:
@@ -3970,16 +3964,15 @@ def _render_current_scope(df: pd.DataFrame, title: str, caption: str) -> None:
         if "country" in df.columns:
             country_count = int(df["country"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
 
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="dashboard-note">
             <div class="dashboard-note-title">{html.escape(title)}</div>
             <div class="dashboard-note-body">{html.escape(caption)}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="summary-ribbon summary-ribbon-compact">
             <div class="summary-ribbon-card">
@@ -4003,8 +3996,7 @@ def _render_current_scope(df: pd.DataFrame, title: str, caption: str) -> None:
                 <div class="summary-ribbon-caption">Source countries still represented in the active slice.</div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -4052,7 +4044,7 @@ def _render_run_diagnostics(
     runtime_band = str((run_metadata or {}).get("runtime_band") or _runtime_band(runtime_seconds))
     health = _health_signal(result_df, scrape_warnings)
 
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="dashboard-note">
             <div class="dashboard-note-title">Run Diagnostics</div>
@@ -4061,10 +4053,9 @@ def _render_run_diagnostics(
                 Runtime {html.escape(_format_runtime_seconds(runtime_seconds))} in the current <strong>{html.escape(runtime_band)}</strong> band.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
-    st.markdown(
+    _render_html_block(
         f"""
         <div class="summary-ribbon summary-ribbon-compact">
             <div class="summary-ribbon-card">
@@ -4098,8 +4089,7 @@ def _render_run_diagnostics(
                 <div class="summary-ribbon-caption">{html.escape(runtime_band)} based on end-to-end scrape and match time.</div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
