@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-29-launch-console-v57"
+APP_BUILD = "2026-04-29-unified-console-v58"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -4249,7 +4249,20 @@ def _render_results(
     review_df = sort_leads_by_hall(review_leads(result_df))
     all_sorted = sort_leads_by_hall(result_df)
 
-    _render_section_header("Overview", "Fair Command Summary", "A concise operating view of fair coverage, priority merchants, and export-ready output.")
+    _render_html_block(
+        """
+        <div class="overview-shell">
+            <div class="overview-shell-top">
+                <div>
+                    <div class="overview-shell-kicker">Overview</div>
+                    <div class="overview-shell-title">Fair Command Summary</div>
+                    <div class="overview-shell-copy">A concise operating view of fair coverage, priority merchants, and export-ready output.</div>
+                </div>
+                <div class="overview-shell-badge">Executive Console</div>
+            </div>
+        </div>
+        """
+    )
     metric_cols = st.columns(3)
     metric_cols[0].metric("Total Exhibitors", summary["total"])
     metric_cols[1].metric("SKM Exhibitor Leads", summary["skm_matches"])
@@ -4278,13 +4291,52 @@ def _render_results(
             unsafe_allow_html=True,
         )
 
-    _render_section_header("Hall Intelligence", "SKM Hall Map", "Start with hall concentration, then move into the selected hall for booth-level execution.")
+    _render_html_block(
+        """
+        <div class="overview-shell overview-shell-tight">
+            <div class="overview-shell-top">
+                <div>
+                    <div class="overview-shell-kicker">Hall Intelligence</div>
+                    <div class="overview-shell-title">SKM Hall Map</div>
+                    <div class="overview-shell-copy">Start with hall concentration, then move into the selected hall for booth-level execution.</div>
+                </div>
+                <div class="overview-shell-badge">Floor View</div>
+            </div>
+        </div>
+        """
+    )
     _render_hall_map(skm_df, all_sorted, show_header=False, run_metadata=run_metadata)
     _render_country_intelligence(skm_df, all_sorted, run_metadata=run_metadata)
-    _render_section_header("Run Record", "Run Summary", "A compact record of the current fair run, including source URL and coverage totals.")
+    _render_html_block(
+        """
+        <div class="overview-shell overview-shell-tight">
+            <div class="overview-shell-top">
+                <div>
+                    <div class="overview-shell-kicker">Run Record</div>
+                    <div class="overview-shell-title">Run Summary</div>
+                    <div class="overview-shell-copy">A compact record of the current fair run, including source URL and coverage totals.</div>
+                </div>
+                <div class="overview-shell-badge">Run Log</div>
+            </div>
+        </div>
+        """
+    )
     _render_run_summary_panel(result_df, run_metadata=run_metadata)
 
-    _render_section_header("Lead Tables", "Lead Sheets", "Use the structured tables when you need full-list review, filtering, or export checks.")
+    _render_html_block(
+        """
+        <div class="overview-shell overview-shell-tight">
+            <div class="overview-shell-top">
+                <div>
+                    <div class="overview-shell-kicker">Lead Tables</div>
+                    <div class="overview-shell-title">Lead Sheets</div>
+                    <div class="overview-shell-copy">Use the structured tables when you need full-list review, filtering, or export checks.</div>
+                </div>
+                <div class="overview-shell-badge">Structured View</div>
+            </div>
+        </div>
+        """
+    )
     filter_left, filter_middle, filter_right, filter_action = st.columns([0.75, 0.9, 1.15, 0.7])
     with filter_left:
         only_with_booth = st.checkbox("Only rows with booth", value=False, key="lead-table-only-booth")
@@ -4721,6 +4773,59 @@ def _inject_app_css() -> None:
             line-height: 1.45;
             margin-bottom: 10px;
             max-width: 840px;
+        }
+        .overview-shell {
+            background: linear-gradient(180deg, rgba(255,255,255,0.985) 0%, rgba(251,252,254,0.985) 100%);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 22px;
+            padding: 18px 18px 16px;
+            box-shadow: 0 18px 38px rgba(15, 23, 42, 0.042);
+            margin: 6px 0 14px 0;
+        }
+        .overview-shell-tight {
+            margin-top: 14px;
+        }
+        .overview-shell-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 12px;
+        }
+        .overview-shell-kicker {
+            color: #7b818f;
+            font-size: 0.76rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 6px;
+        }
+        .overview-shell-title {
+            color: #1f2330;
+            font-size: 1.08rem;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 5px;
+        }
+        .overview-shell-copy {
+            color: #5d6575;
+            font-size: 0.9rem;
+            line-height: 1.45;
+            max-width: 780px;
+        }
+        .overview-shell-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 11px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.92);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            color: #475063;
+            font-size: 0.82rem;
+            font-weight: 600;
+            line-height: 1;
+            white-space: nowrap;
         }
         .radar-card {
             background: rgba(255, 255, 255, 0.88);
