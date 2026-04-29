@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-29-html-render-fix-v55"
+APP_BUILD = "2026-04-29-html-render-fix-v56"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -3127,7 +3127,9 @@ def _render_hall_snapshot_card(title: str, value: int, caption: str) -> None:
 
 
 def _render_html_block(markup: str) -> None:
-    st.markdown(textwrap.dedent(markup).strip(), unsafe_allow_html=True)
+    normalized = textwrap.dedent(markup).strip()
+    normalized = "\n".join(line.lstrip() for line in normalized.splitlines())
+    st.markdown(normalized, unsafe_allow_html=True)
 
 
 def _render_section_header(eyebrow: str, title: str, description: str = "") -> None:
