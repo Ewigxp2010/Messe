@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-29-html-render-fix-v56"
+APP_BUILD = "2026-04-29-launch-console-v57"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -4555,6 +4555,96 @@ def _inject_app_css() -> None:
             color: #111827;
             font-weight: 700;
         }
+        .hero-split {
+            display: grid;
+            grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.9fr);
+            gap: 18px;
+            align-items: stretch;
+            position: relative;
+            z-index: 1;
+        }
+        .hero-main {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-width: 0;
+        }
+        .hero-side-panel {
+            background: rgba(255, 255, 255, 0.88);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 18px;
+            padding: 16px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.74), 0 12px 26px rgba(15,23,42,0.03);
+            backdrop-filter: blur(6px);
+        }
+        .hero-side-kicker {
+            color: #7b818f;
+            font-size: 0.76rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 10px;
+        }
+        .hero-side-title {
+            color: #1b2130;
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1.25;
+            margin-bottom: 8px;
+        }
+        .hero-side-body {
+            color: #5b6474;
+            font-size: 0.9rem;
+            line-height: 1.48;
+            margin-bottom: 14px;
+        }
+        .hero-side-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .hero-side-stat {
+            background: rgba(248, 249, 252, 0.95);
+            border: 1px solid rgba(25, 28, 38, 0.05);
+            border-radius: 14px;
+            padding: 11px 12px;
+        }
+        .hero-side-stat-label {
+            color: #6b7280;
+            font-size: 0.76rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 7px;
+        }
+        .hero-side-stat-value {
+            color: #1f2330;
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+        .hero-side-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .hero-side-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            color: #5a6170;
+            font-size: 0.88rem;
+            line-height: 1.42;
+        }
+        .hero-side-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #f25f45 0%, #e8563e 100%);
+            margin-top: 6px;
+            flex: 0 0 auto;
+        }
         .radar-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4562,6 +4652,75 @@ def _inject_app_css() -> None:
             margin: 16px 0 10px 0;
             position: relative;
             z-index: 1;
+        }
+        .quick-guide-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+            margin: 16px 0 10px 0;
+            position: relative;
+            z-index: 1;
+        }
+        .quick-guide-card {
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(25, 28, 38, 0.055);
+            border-radius: 16px;
+            padding: 16px 16px 14px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 10px 22px rgba(15,23,42,0.025);
+        }
+        .quick-guide-step {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 999px;
+            background: rgba(245, 94, 66, 0.08);
+            color: #a44733;
+            font-size: 0.78rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        .quick-guide-title {
+            color: #1f2330;
+            font-size: 0.95rem;
+            font-weight: 700;
+            margin-bottom: 7px;
+        }
+        .quick-guide-copy {
+            color: #5a6170;
+            font-size: 0.9rem;
+            line-height: 1.45;
+        }
+        .launch-shell {
+            background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(250, 251, 253, 0.98) 100%);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 20px;
+            padding: 18px 18px 16px;
+            box-shadow: 0 18px 38px rgba(15, 23, 42, 0.04);
+            margin: 4px 0 16px 0;
+        }
+        .launch-kicker {
+            color: #7b818f;
+            font-size: 0.76rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 6px;
+        }
+        .launch-title {
+            color: #1f2330;
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 6px;
+        }
+        .launch-caption {
+            color: #5d6575;
+            font-size: 0.9rem;
+            line-height: 1.45;
+            margin-bottom: 10px;
+            max-width: 840px;
         }
         .radar-card {
             background: rgba(255, 255, 255, 0.88);
@@ -5094,7 +5253,13 @@ def _inject_app_css() -> None:
             box-shadow: 0 10px 24px rgba(15, 23, 42, 0.03);
         }
         @media (max-width: 900px) {
+            .hero-split {
+                grid-template-columns: 1fr;
+            }
             .radar-grid {
+                grid-template-columns: 1fr;
+            }
+            .quick-guide-grid {
                 grid-template-columns: 1fr;
             }
             .summary-ribbon {
@@ -5125,53 +5290,78 @@ def _render_onboarding(has_builtin_skm: bool) -> None:
         if has_builtin_skm
         else "If the built-in SKM base is unavailable, upload an SKM Excel or CSV file first."
     )
-    st.markdown(
+    _render_html_block(
         f"""
         <section class="radar-hero">
-            <div class="radar-eyebrow">Operations Brief</div>
-            <h1>TikTok Shop Fair Intel Console</h1>
-            <p>
-                Track priority merchants across trade fairs, locate them by hall and booth,
-                and export a clean operating list for on-site outreach. {built_in_copy}
-            </p>
-            <div class="radar-status-row">
-                <div class="radar-status-chip"><strong>SKM Base</strong> Built in</div>
-                <div class="radar-status-chip"><strong>Mode</strong> Fair intelligence</div>
-                <div class="radar-status-chip"><strong>Output</strong> Hall and booth leads</div>
+            <div class="hero-split">
+                <div class="hero-main">
+                    <div class="radar-eyebrow">Launch Brief</div>
+                    <h1>TikTok Shop Fair Intel Console</h1>
+                    <p>
+                        Turn exhibitor directories into hall-ready operating lists for field outreach.
+                        We identify SKM attendance, surface booth-level location detail, and organize the fair floor into
+                        a cleaner action view. {built_in_copy}
+                    </p>
+                    <div class="radar-status-row">
+                        <div class="radar-status-chip"><strong>SKM Base</strong> Built in</div>
+                        <div class="radar-status-chip"><strong>Mode</strong> Fair intelligence</div>
+                        <div class="radar-status-chip"><strong>Output</strong> Hall and booth leads</div>
+                    </div>
+                </div>
+                <div class="hero-side-panel">
+                    <div class="hero-side-kicker">Ready State</div>
+                    <div class="hero-side-title">Built for fast fair triage</div>
+                    <div class="hero-side-body">
+                        Use this console when you need to move from a public fair directory into a booth-level SKM operating list
+                        without manually cleaning exhibitor pages.
+                    </div>
+                    <div class="hero-side-grid">
+                        <div class="hero-side-stat">
+                            <div class="hero-side-stat-label">Input</div>
+                            <div class="hero-side-stat-value">Directory URL</div>
+                        </div>
+                        <div class="hero-side-stat">
+                            <div class="hero-side-stat-label">Default Base</div>
+                            <div class="hero-side-stat-value">Built-in SKM</div>
+                        </div>
+                        <div class="hero-side-stat">
+                            <div class="hero-side-stat-label">Primary View</div>
+                            <div class="hero-side-stat-value">Hall Map</div>
+                        </div>
+                        <div class="hero-side-stat">
+                            <div class="hero-side-stat-label">Export</div>
+                            <div class="hero-side-stat-value">Field-ready Excel</div>
+                        </div>
+                    </div>
+                    <div class="hero-side-list">
+                        <div class="hero-side-item"><span class="hero-side-dot"></span><span>Most runs only need a fair URL because the SKM pool is already active.</span></div>
+                        <div class="hero-side-item"><span class="hero-side-dot"></span><span>Some fairs finish quickly, while heavier directories may still take a few minutes.</span></div>
+                        <div class="hero-side-item"><span class="hero-side-dot"></span><span>The first successful run is cached, so repeat analysis is substantially faster.</span></div>
+                    </div>
+                </div>
             </div>
-            <div class="radar-grid">
-                <div class="radar-card">
-                    <h3>Directory Input</h3>
-                    <ul>
-                        <li>Paste the exhibitor directory URL from the fair website.</li>
-                        <li>Keep the built-in SKM base turned on unless you intentionally want a different list.</li>
-                        <li>Use uploaded HTML only as a fallback for JavaScript-heavy pages.</li>
-                    </ul>
+            <div class="quick-guide-grid">
+                <div class="quick-guide-card">
+                    <div class="quick-guide-step">01</div>
+                    <div class="quick-guide-title">Launch with the fair directory</div>
+                    <div class="quick-guide-copy">Paste the exhibitor directory URL from the fair site. Only fall back to uploaded HTML when the page is unusually JavaScript-heavy.</div>
                 </div>
-                <div class="radar-card">
-                    <h3>Operating Flow</h3>
-                    <ul>
-                        <li>Open a fair directory URL and click <strong>Scrape and Match</strong>.</li>
-                        <li>Review <strong>Hall Map</strong> first to see where SKM density is highest.</li>
-                        <li>Download Excel when you need a field-ready lead list by hall.</li>
-                    </ul>
+                <div class="quick-guide-card">
+                    <div class="quick-guide-step">02</div>
+                    <div class="quick-guide-title">Let the first run finish</div>
+                    <div class="quick-guide-copy">The first pass may need patience while the app discovers the best scrape path. Longer runs can still be healthy for complex fairs.</div>
                 </div>
-                <div class="radar-card">
-                    <h3>Run Expectations</h3>
-                    <ul>
-                        <li>Some fairs finish in seconds, others take longer because they split data across many buckets.</li>
-                        <li>Please wait patiently while the app scrapes and matches; a longer fair run can still be normal.</li>
-                        <li>Use the scrape warnings panel as a quick health check after the run.</li>
-                    </ul>
+                <div class="quick-guide-card">
+                    <div class="quick-guide-step">03</div>
+                    <div class="quick-guide-title">Work from hall to booth</div>
+                    <div class="quick-guide-copy">Start in Hall Intelligence to find concentrated SKM zones, then move into the selected hall and export an operating slice for the floor.</div>
                 </div>
             </div>
             <div class="radar-note">
-                <strong>Tip:</strong> Let the first run finish before retrying. Successful fair runs are cached,
-                so repeat analysis is much faster.
+                <strong>Operator note:</strong> Treat the scrape warnings panel as a quick health check, not as an automatic failure signal. A fair can still produce a strong operating list even when a few pages are retried or skipped.
             </div>
         </section>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -5246,6 +5436,18 @@ def main() -> None:
         )
 
     _render_onboarding(has_builtin_skm)
+
+    _render_html_block(
+        """
+        <div class="launch-shell">
+            <div class="launch-kicker">Run Setup</div>
+            <div class="launch-title">Start a fair run</div>
+            <div class="launch-caption">
+                Enter the fair directory URL below, then launch the run. Keep the built-in SKM base active unless you intentionally need a different merchant pool.
+            </div>
+        </div>
+        """
+    )
 
     left, right = st.columns([2, 1])
     with left:
