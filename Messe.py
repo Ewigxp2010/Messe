@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-29-command-dock-v59"
+APP_BUILD = "2026-04-29-workspace-mode-v60"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -4839,6 +4839,63 @@ def _inject_app_css() -> None:
             color: #1f2330;
             font-weight: 700;
         }
+        .workspace-banner {
+            background: linear-gradient(180deg, rgba(255,255,255,0.985) 0%, rgba(250,251,253,0.985) 100%);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            border-radius: 18px;
+            padding: 15px 16px 13px;
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.035);
+            margin: 0 0 14px 0;
+        }
+        .workspace-banner-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .workspace-banner-kicker {
+            color: #7b818f;
+            font-size: 0.74rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 5px;
+        }
+        .workspace-banner-title {
+            color: #1f2330;
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 4px;
+        }
+        .workspace-banner-copy {
+            color: #5d6575;
+            font-size: 0.88rem;
+            line-height: 1.42;
+            max-width: 760px;
+        }
+        .workspace-banner-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .workspace-banner-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.92);
+            border: 1px solid rgba(25, 28, 38, 0.06);
+            color: #556071;
+            font-size: 0.8rem;
+            line-height: 1;
+        }
+        .workspace-banner-chip strong {
+            color: #1f2330;
+            font-weight: 700;
+        }
         .overview-shell {
             background: linear-gradient(180deg, rgba(255,255,255,0.985) 0%, rgba(251,252,254,0.985) 100%);
             border: 1px solid rgba(25, 28, 38, 0.06);
@@ -5566,8 +5623,41 @@ def _render_launch_dock() -> None:
     )
 
 
+def _render_workspace_banner(source_url: str, run_metadata: Optional[Dict[str, Any]] = None) -> None:
+    host = urlparse(source_url).netloc.lower().strip()
+    host = re.sub(r"^www\.", "", host) or "fair workspace"
+    runtime_text = _format_runtime_seconds((run_metadata or {}).get("elapsed_seconds"))
+    runtime_band = str((run_metadata or {}).get("runtime_band") or _runtime_band((run_metadata or {}).get("elapsed_seconds")))
+    completed_at = str((run_metadata or {}).get("completed_at") or "Ready")
+    _render_html_block(
+        f"""
+        <div class="workspace-banner">
+            <div class="workspace-banner-top">
+                <div>
+                    <div class="workspace-banner-kicker">Active Workspace</div>
+                    <div class="workspace-banner-title">{html.escape(host)}</div>
+                    <div class="workspace-banner-copy">
+                        The console is already in run mode for this fair. You can launch another capture, keep refining the current result set, or move directly into hall-level execution.
+                    </div>
+                </div>
+                <div class="overview-shell-badge">Live Console</div>
+            </div>
+            <div class="workspace-banner-chip-row">
+                <div class="workspace-banner-chip"><strong>Runtime</strong> {html.escape(runtime_text)}</div>
+                <div class="workspace-banner-chip"><strong>Pace</strong> {html.escape(runtime_band)}</div>
+                <div class="workspace-banner-chip"><strong>Last Run</strong> {html.escape(completed_at)}</div>
+            </div>
+        </div>
+        """
+    )
+
+
 def main() -> None:
     _inject_app_css()
+    result_state_key = "last_result_df"
+    warning_state_key = "last_scrape_warnings"
+    signature_state_key = "last_run_signature"
+    metadata_state_key = "last_run_metadata"
 
     with st.sidebar:
         _render_sidebar_shell("Control Rail", "SKM Base", "Use the built-in SKM pool by default, or swap in a different list only when you intentionally need another merchant base.")
@@ -5638,7 +5728,17 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-    _render_onboarding(has_builtin_skm)
+    prior_result_df = st.session_state.get(result_state_key)
+    prior_run_metadata = st.session_state.get(metadata_state_key, {})
+    prior_source_url = ""
+    if isinstance(prior_result_df, pd.DataFrame) and not prior_result_df.empty and "source_url" in prior_result_df.columns:
+        source_values = [str(v).strip() for v in prior_result_df["source_url"].fillna("").tolist() if str(v).strip()]
+        prior_source_url = source_values[0] if source_values else ""
+
+    if isinstance(prior_result_df, pd.DataFrame) and not prior_result_df.empty:
+        _render_workspace_banner(prior_source_url, prior_run_metadata)
+    else:
+        _render_onboarding(has_builtin_skm)
     _render_launch_dock()
 
     _render_html_block(
@@ -5665,11 +5765,6 @@ def main() -> None:
 
     if not can_run:
         st.info("Upload an SKM Excel/CSV file, then enter an exhibitor URL or upload exhibitor page HTML.")
-
-    result_state_key = "last_result_df"
-    warning_state_key = "last_scrape_warnings"
-    signature_state_key = "last_run_signature"
-    metadata_state_key = "last_run_metadata"
 
     if run:
         config = ScrapeConfig(
