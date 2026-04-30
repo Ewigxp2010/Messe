@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-29-workspace-mode-v60"
+APP_BUILD = "2026-04-30-confidence-guardrails-v61"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -2572,16 +2572,45 @@ def _diagnostic_metrics(result_df: pd.DataFrame, scrape_warnings: Sequence[str])
     hall_count = 0
     booth_rows = 0
     country_count = 0
+    unique_exhibitors = 0
+    skm_rows = 0
+    review_rows = 0
+    unknown_hall_rows = 0
+    unknown_country_rows = 0
+    junk_name_rows = 0
     if total_rows:
+        normalized_names = set()
+        if "exhibitor_name" in result_df.columns:
+            exhibitor_names = result_df["exhibitor_name"].fillna("").astype(str).str.strip()
+            for value in exhibitor_names.tolist():
+                normalized = normalize_company_name(value)
+                if normalized:
+                    normalized_names.add(normalized)
+                if any(token in value.lower() for token in JUNK_NAME_HINTS):
+                    junk_name_rows += 1
+            unique_exhibitors = len(normalized_names)
         if "hall" in result_df.columns:
-            hall_count = int(result_df["hall"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+            hall_series = result_df["hall"].fillna("").astype(str).str.strip()
+            hall_count = int(hall_series.replace("", pd.NA).dropna().nunique())
+            unknown_hall_rows = int(hall_series.eq("").sum() + hall_series.str.lower().eq("unknown hall").sum())
         if "booth" in result_df.columns:
             booth_rows = int(result_df["booth"].fillna("").astype(str).str.strip().ne("").sum())
         if "country" in result_df.columns:
-            country_count = int(result_df["country"].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique())
+            country_series = result_df["country"].fillna("").astype(str).str.strip()
+            country_count = int(country_series.replace("", pd.NA).dropna().nunique())
+            unknown_country_rows = int(country_series.eq("").sum() + country_series.str.lower().eq("unknown country").sum())
+        if "match_status" in result_df.columns:
+            status_series = result_df["match_status"].fillna("").astype(str).str.strip()
+            skm_rows = int(status_series.eq("SKM Match").sum())
+            review_rows = int(status_series.eq("Needs Review").sum())
 
     hall_coverage = (hall_count / total_rows * 100) if total_rows else 0.0
     booth_coverage = (booth_rows / total_rows * 100) if total_rows else 0.0
+    unknown_hall_ratio = (unknown_hall_rows / total_rows * 100) if total_rows else 0.0
+    unknown_country_ratio = (unknown_country_rows / total_rows * 100) if total_rows else 0.0
+    junk_ratio = (junk_name_rows / total_rows * 100) if total_rows else 0.0
+    skm_ratio = (skm_rows / total_rows * 100) if total_rows else 0.0
+    review_ratio = (review_rows / total_rows * 100) if total_rows else 0.0
     strategy = _infer_run_strategy(result_df, scrape_warnings)
     warning_count = len(scrape_warnings)
 
@@ -2590,46 +2619,158 @@ def _diagnostic_metrics(result_df: pd.DataFrame, scrape_warnings: Sequence[str])
         "hall_count": hall_count,
         "booth_rows": booth_rows,
         "country_count": country_count,
+        "unique_exhibitors": unique_exhibitors,
+        "skm_rows": skm_rows,
+        "review_rows": review_rows,
         "hall_coverage": hall_coverage,
         "booth_coverage": booth_coverage,
+        "unknown_hall_rows": unknown_hall_rows,
+        "unknown_hall_ratio": unknown_hall_ratio,
+        "unknown_country_rows": unknown_country_rows,
+        "unknown_country_ratio": unknown_country_ratio,
+        "junk_name_rows": junk_name_rows,
+        "junk_ratio": junk_ratio,
+        "skm_ratio": skm_ratio,
+        "review_ratio": review_ratio,
         "strategy": strategy,
         "warning_count": warning_count,
     }
 
 
-def _health_signal(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> Dict[str, str]:
+def _diagnostic_flags(metrics: Dict[str, Any]) -> List[Tuple[str, str]]:
+    flags: List[Tuple[str, str]] = []
+    total_rows = int(metrics["total_rows"])
+    hall_coverage = float(metrics["hall_coverage"])
+    booth_coverage = float(metrics["booth_coverage"])
+    warning_count = int(metrics["warning_count"])
+    unknown_hall_ratio = float(metrics["unknown_hall_ratio"])
+    unknown_country_ratio = float(metrics["unknown_country_ratio"])
+    junk_ratio = float(metrics["junk_ratio"])
+    unique_exhibitors = int(metrics["unique_exhibitors"])
+
+    if total_rows == 0:
+        flags.append(("critical", "No exhibitor rows were captured."))
+        return flags
+
+    if total_rows < 25:
+        flags.append(("critical", "Very few rows were captured for a fair-style directory."))
+    elif total_rows < 100:
+        flags.append(("warning", "Row volume is relatively light; confirm the source is a real exhibitor directory."))
+
+    if unique_exhibitors and total_rows >= max(unique_exhibitors * 4, 200):
+        flags.append(("warning", "The run contains many repeated row variants compared with unique exhibitor names."))
+
+    if hall_coverage < 35:
+        flags.append(("critical", "Hall coverage is very thin."))
+    elif hall_coverage < 70:
+        flags.append(("warning", "Hall coverage is usable but incomplete."))
+
+    if booth_coverage < 20:
+        flags.append(("critical", "Booth visibility is very low."))
+    elif booth_coverage < 50:
+        flags.append(("warning", "Booth visibility is partial."))
+
+    if unknown_hall_ratio >= 50:
+        flags.append(("critical", "A large share of rows still have unknown hall placement."))
+    elif unknown_hall_ratio >= 20:
+        flags.append(("warning", "Some rows still miss hall placement."))
+
+    if unknown_country_ratio >= 40:
+        flags.append(("warning", "Country coverage is limited across the current result set."))
+
+    if junk_ratio >= 15:
+        flags.append(("critical", "Many rows still look like navigation or non-exhibitor content."))
+    elif junk_ratio >= 5:
+        flags.append(("warning", "Some rows still resemble page chrome rather than exhibitor leads."))
+
+    if warning_count >= 10:
+        flags.append(("critical", "The scrape produced a high number of retries or fallback warnings."))
+    elif warning_count >= 4:
+        flags.append(("warning", "The scrape produced several warnings worth a quick spot check."))
+
+    return flags
+
+
+def _operator_recommendation(metrics: Dict[str, Any], health_label: str) -> str:
+    strategy = str(metrics["strategy"])
+    hall_coverage = float(metrics["hall_coverage"])
+    booth_coverage = float(metrics["booth_coverage"])
+    warning_count = int(metrics["warning_count"])
+
+    if health_label == "Needs Attention":
+        return "Do not circulate this operating list yet. Verify the fair URL, then rerun from the exhibitor directory or upload the exhibitor page HTML."
+    if health_label == "Healthy":
+        return "Use this run directly for floor execution, then drill into top halls and booth-ready SKM rows."
+    if hall_coverage < 35 or booth_coverage < 20:
+        return "Treat this as a partial capture. Verify the source URL, then rerun from a deeper exhibitor directory or upload the page HTML."
+    if warning_count >= 4:
+        return f"Use the run cautiously. Spot-check 3 to 5 leads against the live fair site before sharing the operating list from {strategy}."
+    return "Use this run after a light sanity check on top halls, source countries, and a few booth-ready leads."
+
+
+def _health_signal(result_df: pd.DataFrame, scrape_warnings: Sequence[str]) -> Dict[str, Any]:
     metrics = _diagnostic_metrics(result_df, scrape_warnings)
     total_rows = int(metrics["total_rows"])
     hall_coverage = float(metrics["hall_coverage"])
     booth_coverage = float(metrics["booth_coverage"])
     warning_count = int(metrics["warning_count"])
+    flags = _diagnostic_flags(metrics)
+    critical_count = sum(1 for severity, _ in flags if severity == "critical")
+    warning_flag_count = sum(1 for severity, _ in flags if severity == "warning")
 
     if total_rows == 0:
-        return {
+        result = {
             "label": "Needs Attention",
             "tone": "alert",
             "reason": "No lead rows were captured in the current run.",
+            "confidence": "Low",
+            "flags": flags,
         }
+        result["next_step"] = _operator_recommendation(metrics, result["label"])
+        return result
+
+    if critical_count >= 2 or (critical_count >= 1 and warning_count >= 4):
+        result = {
+            "label": "Needs Attention",
+            "tone": "alert",
+            "reason": "Multiple quality checks failed, so this run likely needs validation before use.",
+            "confidence": "Low",
+            "flags": flags,
+        }
+        result["next_step"] = _operator_recommendation(metrics, result["label"])
+        return result
 
     if hall_coverage >= 85 and booth_coverage >= 65 and warning_count <= 2:
-        return {
+        result = {
             "label": "Healthy",
             "tone": "healthy",
             "reason": "Hall and booth coverage look strong, with limited scrape warnings.",
+            "confidence": "High",
+            "flags": flags,
         }
+        result["next_step"] = _operator_recommendation(metrics, result["label"])
+        return result
 
-    if hall_coverage >= 60 and booth_coverage >= 35 and warning_count <= 8:
-        return {
+    if hall_coverage >= 60 and booth_coverage >= 35 and warning_count <= 8 and critical_count == 0:
+        result = {
             "label": "Review",
             "tone": "review",
             "reason": "The run is usable, but coverage or warning volume suggests a quick sanity check.",
+            "confidence": "Medium",
+            "flags": flags,
         }
+        result["next_step"] = _operator_recommendation(metrics, result["label"])
+        return result
 
-    return {
+    result = {
         "label": "Partial",
         "tone": "partial",
         "reason": "Coverage is thin or warnings are elevated, so this run likely needs validation.",
+        "confidence": "Medium" if warning_flag_count <= 2 else "Low",
+        "flags": flags,
     }
+    result["next_step"] = _operator_recommendation(metrics, result["label"])
+    return result
 
 
 def run_summary_frame(
@@ -2669,6 +2810,7 @@ def run_summary_frame(
         {"metric": "Run Date", "value": run_date},
         {"metric": "Source URL", "value": source_url},
         {"metric": "Total Exhibitor Rows", "value": total_rows},
+        {"metric": "Unique Exhibitors", "value": int(_diagnostic_metrics(all_df, scrape_warnings or [])["unique_exhibitors"])},
         {"metric": "SKM Exhibitor Rows", "value": len(skm_df)},
         {"metric": "Possible Matches", "value": len(review_df)},
         {"metric": "Unique Halls", "value": hall_count},
@@ -2677,7 +2819,9 @@ def run_summary_frame(
         {"metric": "Run Time", "value": _format_runtime_seconds(runtime_seconds)},
         {"metric": "Run Pace", "value": runtime_band},
         {"metric": "Run Health", "value": health["label"]},
+        {"metric": "Run Confidence", "value": health["confidence"]},
         {"metric": "Health Note", "value": health["reason"]},
+        {"metric": "Operator Recommendation", "value": health["next_step"]},
     ]
     filter_labels = [str(label).strip() for label in (active_filters or []) if str(label).strip()]
     if export_scope:
@@ -2685,6 +2829,9 @@ def run_summary_frame(
     if filter_labels:
         rows.append({"metric": "Active Filters", "value": " | ".join(filter_labels)})
     warning_list = list(scrape_warnings or [])
+    quality_flags = [message for _, message in health.get("flags", [])]
+    if quality_flags:
+        rows.append({"metric": "Quality Flags", "value": " | ".join(quality_flags)})
     rows.append({"metric": "Short Brief", "value": _build_short_field_brief(all_df, warning_list, run_metadata=run_metadata)})
     rows.append({"metric": "Ops Brief", "value": _build_field_brief(all_df, warning_list, run_metadata=run_metadata)})
     return pd.DataFrame(rows)
@@ -4042,9 +4189,13 @@ def _render_run_diagnostics(
     booth_coverage = float(metrics["booth_coverage"])
     strategy = str(metrics["strategy"])
     warning_count = int(metrics["warning_count"])
+    unique_exhibitors = int(metrics["unique_exhibitors"])
+    unknown_hall_ratio = float(metrics["unknown_hall_ratio"])
+    review_ratio = float(metrics["review_ratio"])
     runtime_seconds = (run_metadata or {}).get("elapsed_seconds")
     runtime_band = str((run_metadata or {}).get("runtime_band") or _runtime_band(runtime_seconds))
     health = _health_signal(result_df, scrape_warnings)
+    quality_flags = list(health.get("flags", []))
 
     _render_html_block(
         f"""
@@ -4053,6 +4204,7 @@ def _render_run_diagnostics(
             <div class="dashboard-note-body">
                 Strategy <strong>{html.escape(strategy)}</strong> with {warning_count} warning(s) recorded during capture.
                 Runtime {html.escape(_format_runtime_seconds(runtime_seconds))} in the current <strong>{html.escape(runtime_band)}</strong> band.
+                Current confidence is <strong>{html.escape(health['confidence'])}</strong> across {unique_exhibitors} unique exhibitors.
             </div>
         </div>
         """
@@ -4064,6 +4216,11 @@ def _render_run_diagnostics(
                 <div class="summary-ribbon-title">Run Health</div>
                 <div class="summary-ribbon-value"><span class="health-chip {html.escape(health['tone'])}">{html.escape(health['label'])}</span></div>
                 <div class="summary-ribbon-caption">{html.escape(health['reason'])}</div>
+            </div>
+            <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Confidence</div>
+                <div class="summary-ribbon-value">{html.escape(health['confidence'])}</div>
+                <div class="summary-ribbon-caption">A practical trust level for one-off fair use.</div>
             </div>
             <div class="summary-ribbon-card">
                 <div class="summary-ribbon-title">Capture Mode</div>
@@ -4086,6 +4243,11 @@ def _render_run_diagnostics(
                 <div class="summary-ribbon-caption">Source countries represented in the current operating list.</div>
             </div>
             <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Review Load</div>
+                <div class="summary-ribbon-value">{review_ratio:.1f}%</div>
+                <div class="summary-ribbon-caption">Share of the result set still sitting in possible-match review.</div>
+            </div>
+            <div class="summary-ribbon-card">
                 <div class="summary-ribbon-title">Run Time</div>
                 <div class="summary-ribbon-value">{html.escape(_format_runtime_seconds(runtime_seconds))}</div>
                 <div class="summary-ribbon-caption">{html.escape(runtime_band)} based on end-to-end scrape and match time.</div>
@@ -4093,6 +4255,33 @@ def _render_run_diagnostics(
         </div>
         """
     )
+    if quality_flags:
+        chips = "".join(
+            f'<span class="filter-chip {"active" if severity == "warning" else ""}">{html.escape(message)}</span>'
+            for severity, message in quality_flags[:6]
+        )
+        _render_html_block(
+            f"""
+            <div class="dashboard-note">
+                <div class="dashboard-note-title">Attention Signals</div>
+                <div class="dashboard-note-body">
+                    {html.escape(health['next_step'])}
+                </div>
+                <div class="filter-chip-row">{chips}</div>
+            </div>
+            """
+        )
+    elif unknown_hall_ratio <= 5:
+        _render_html_block(
+            f"""
+            <div class="dashboard-note">
+                <div class="dashboard-note-title">Operator Recommendation</div>
+                <div class="dashboard-note-body">
+                    {html.escape(health['next_step'])}
+                </div>
+            </div>
+            """
+        )
 
 
 def _build_field_brief(
@@ -4104,6 +4293,7 @@ def _build_field_brief(
     skm_df = sort_leads_by_hall(skm_leads(result_df))
     review_df = sort_leads_by_hall(review_leads(result_df))
     strategy = _infer_run_strategy(result_df, scrape_warnings)
+    health = _health_signal(result_df, scrape_warnings)
     top_hall = "n/a"
     top_country = "n/a"
     booth_ready_rows = 0
@@ -4133,9 +4323,10 @@ def _build_field_brief(
 
     return (
         f"{host}: {total_rows} lead rows captured, {len(skm_df)} SKM rows identified, "
-        f"{len(review_df)} possible matches, capture mode {strategy}, top hall {top_hall}, "
+        f"{len(review_df)} possible matches, capture mode {strategy}, run health {health['label']} ({health['confidence']} confidence), top hall {top_hall}, "
         f"top source country {top_country}, top halls [{top_halls_text}], top source countries [{top_countries_text}], "
-        f"booth-ready rows {booth_ready_rows}, runtime {runtime_text}, warnings {len(scrape_warnings)}."
+        f"booth-ready rows {booth_ready_rows}, runtime {runtime_text}, warnings {len(scrape_warnings)}. "
+        f"Recommendation: {health['next_step']}"
     )
 
 
@@ -4147,6 +4338,7 @@ def _build_short_field_brief(
     total_rows = len(result_df)
     skm_df = sort_leads_by_hall(skm_leads(result_df))
     strategy = _infer_run_strategy(result_df, scrape_warnings)
+    health = _health_signal(result_df, scrape_warnings)
     top_hall = "n/a"
     top_country = "n/a"
     hall_df = hall_summary(skm_df)
@@ -4165,7 +4357,7 @@ def _build_short_field_brief(
     host = host or "fair site"
     runtime_text = _format_runtime_seconds((run_metadata or {}).get("elapsed_seconds"))
 
-    return f"{host}: {total_rows} rows / {len(skm_df)} SKM / top hall {top_hall} / top country {top_country} / mode {strategy} / runtime {runtime_text}."
+    return f"{host}: {total_rows} rows / {len(skm_df)} SKM / top hall {top_hall} / top country {top_country} / mode {strategy} / health {health['label']} ({health['confidence']}) / runtime {runtime_text}."
 
 
 def _render_field_brief(
