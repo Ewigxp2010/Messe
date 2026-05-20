@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-05-20-koelnmesse-pagination-v63"
+APP_BUILD = "2026-05-20-koelnmesse-total-pages-v64"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -1029,6 +1029,7 @@ def _extract_koelnmesse_directory_page_urls(html_text: str, base_url: str) -> Li
     discovered_starts = {0}
     max_page_number = 1
     max_start = 0
+    declared_total_pages = _koelnmesse_declared_total_pages(html_text)
 
     for link in soup.find_all("a", href=True):
         href = _clean_text(link.get("href"))
@@ -1052,8 +1053,13 @@ def _extract_koelnmesse_directory_page_urls(html_text: str, base_url: str) -> Li
     if step <= 0:
         step = 20
 
+    if declared_total_pages > max_page_number:
+        max_page_number = declared_total_pages
+
     if max_start <= 0 and max_page_number > 1:
         max_start = (max_page_number - 1) * step
+    elif max_page_number > 1:
+        max_start = max(max_start, (max_page_number - 1) * step)
 
     generated_urls: List[str] = []
     for start_value in range(step, max_start + step, step):
@@ -1089,6 +1095,14 @@ def _infer_koelnmesse_page_step(starts: Sequence[int]) -> int:
     if not deltas:
         return positive[0]
     return min(deltas)
+
+
+def _koelnmesse_declared_total_pages(html_text: str) -> int:
+    candidates = re.findall(r"\bvon\s+(\d{1,4})\b", html_text, flags=re.IGNORECASE)
+    page_counts = [int(value) for value in candidates if value.isdigit()]
+    if not page_counts:
+        return 0
+    return max(page_counts)
 
 
 def _parse_koelnmesse_directory_page(page_html: str, page_url: str, source_url: str) -> List[Dict[str, Any]]:
