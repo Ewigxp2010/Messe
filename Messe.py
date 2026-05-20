@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-05-20-koelnmesse-directory-v62"
+APP_BUILD = "2026-05-20-koelnmesse-pagination-v63"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -1018,8 +1018,18 @@ def _fetch_koelnmesse_directory_exhibitors(config: ScrapeConfig) -> Optional[Lis
 
 def _extract_koelnmesse_directory_page_urls(html_text: str, base_url: str) -> List[str]:
     soup = _require_bs4()(html_text, "html.parser")
+    parsed_base = urlparse(base_url)
+    base_query = parse_qs(parsed_base.query, keep_blank_values=True)
+    default_paginate = '{"stichwort":"","suchart":"alle"}'
+    paginatevalues = base_query.get("paginatevalues", [default_paginate])[0]
+    route_value = base_query.get("route", ["aussteller/blaettern"])[0]
+
     urls: List[str] = [base_url]
     seen = {base_url}
+    discovered_starts = {0}
+    max_page_number = 1
+    max_start = 0
+
     for link in soup.find_all("a", href=True):
         href = _clean_text(link.get("href"))
         lower_href = href.lower()
@@ -1029,7 +1039,56 @@ def _extract_koelnmesse_directory_page_urls(html_text: str, base_url: str) -> Li
         if absolute and absolute not in seen:
             seen.add(absolute)
             urls.append(absolute)
+        parsed = urlparse(absolute)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        start_value = _safe_int((query.get("start") or ["0"])[0], default=0)
+        discovered_starts.add(start_value)
+        max_start = max(max_start, start_value)
+        page_label = _clean_text(link.get_text(" "))
+        if page_label.isdigit():
+            max_page_number = max(max_page_number, int(page_label))
+
+    step = _infer_koelnmesse_page_step(sorted(discovered_starts))
+    if step <= 0:
+        step = 20
+
+    if max_start <= 0 and max_page_number > 1:
+        max_start = (max_page_number - 1) * step
+
+    generated_urls: List[str] = []
+    for start_value in range(step, max_start + step, step):
+        query = {
+            "paginatevalues": paginatevalues,
+            "route": route_value,
+            "start": str(start_value),
+        }
+        generated = urlunparse(
+            (
+                parsed_base.scheme,
+                parsed_base.netloc,
+                parsed_base.path,
+                parsed_base.params,
+                urlencode(query),
+                parsed_base.fragment,
+            )
+        )
+        if generated not in seen:
+            seen.add(generated)
+            generated_urls.append(generated)
+
+    urls.extend(generated_urls)
     return urls
+
+
+def _infer_koelnmesse_page_step(starts: Sequence[int]) -> int:
+    positive = [value for value in starts if value > 0]
+    if not positive:
+        return 20
+    positive = sorted(set(positive))
+    deltas = [positive[index] - positive[index - 1] for index in range(1, len(positive)) if positive[index] > positive[index - 1]]
+    if not deltas:
+        return positive[0]
+    return min(deltas)
 
 
 def _parse_koelnmesse_directory_page(page_html: str, page_url: str, source_url: str) -> List[Dict[str, Any]]:
@@ -1975,6 +2034,13 @@ def _clean_key(key: Any) -> str:
 def _clean_text(value: Any) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     return text
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
 
 
 def _absolute_url(value: str, base_url: str) -> str:
