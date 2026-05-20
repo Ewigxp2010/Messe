@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-05-20-koelnmesse-total-pages-v64"
+APP_BUILD = "2026-05-20-koelnmesse-card-parser-v65"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -1107,6 +1107,7 @@ def _koelnmesse_declared_total_pages(html_text: str) -> int:
 
 def _parse_koelnmesse_directory_page(page_html: str, page_url: str, source_url: str) -> List[Dict[str, Any]]:
     soup = _require_bs4()(page_html, "html.parser")
+    card_rows = _extract_koelnmesse_directory_cards(soup, page_url, source_url)
     strings = [_clean_text(value) for value in soup.stripped_strings]
     lines = [value for value in strings if value]
     link_map = _koelnmesse_company_links(soup, page_url)
@@ -1181,6 +1182,92 @@ def _parse_koelnmesse_directory_page(page_html: str, page_url: str, source_url: 
             continue
 
         i += 1
+
+    rows.extend(card_rows)
+    return _dedupe_exhibitors(rows)
+
+
+def _extract_koelnmesse_directory_cards(soup: Any, page_url: str, source_url: str) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    seen_keys = set()
+
+    for link in soup.find_all("a", href=True):
+        href = _clean_text(link.get("href"))
+        absolute = _absolute_url(href, page_url)
+        if "fw_goto=aussteller/details" not in absolute.lower():
+            continue
+
+        name = _clean_text(link.get_text(" "))
+        if not _koelnmesse_looks_like_company_name(name):
+            continue
+
+        container = link
+        for _ in range(6):
+            parent = getattr(container, "parent", None)
+            if parent is None:
+                break
+            container = parent
+            text = _clean_text(container.get_text(" "))
+            if name in text and (_koelnmesse_looks_like_location(text) or " | " in text or "halle " in text.lower() or "boulevard " in text.lower()):
+                break
+
+        values = [_clean_text(value) for value in container.stripped_strings if _clean_text(value)]
+        values = [value for value in values if not _koelnmesse_should_skip_line(value.lower())]
+        if not values:
+            continue
+
+        country = ""
+        location = ""
+        if name in values:
+            name_index = values.index(name)
+            tail = values[name_index + 1 :]
+        else:
+            tail = [value for value in values if value != name]
+
+        for value in tail:
+            if _koelnmesse_looks_like_location(value):
+                location = value
+                break
+            if not country:
+                country = value
+
+        if not location:
+            surrounding_text = _clean_text(container.get_text(" "))
+            location_match = re.search(
+                r"((?:Halle\s+[0-9]{1,2}(?:\.[0-9])?[A-Za-z]?\s*\|\s*[A-Za-z0-9-]+)|(?:Boulevard\s+[A-Za-z0-9-]+)|(?:Freifläche\s+[A-Za-z0-9-]+)|(?:Freiflaeche\s+[A-Za-z0-9-]+))",
+                surrounding_text,
+                flags=re.IGNORECASE,
+            )
+            if location_match:
+                location = _clean_text(location_match.group(1))
+
+        if not country:
+            surrounding_text = _clean_text(container.get_text(" "))
+            country = extract_country(surrounding_text)
+
+        if not location:
+            continue
+
+        hall, booth = _parse_koelnmesse_location(location)
+        row = _make_row(
+            name=name,
+            hall=hall,
+            booth=booth,
+            country=country,
+            website="",
+            detail_url=absolute,
+            source_url=source_url,
+            raw_text=_clean_text(container.get_text(" "))[:1200],
+            method="koelnmesse_directory",
+        )
+        row["show_area"] = _clean_text(hall)
+        row["exhibitor_uid"] = _clean_text(absolute or f"{name}|{hall}|{booth}")
+        dedupe_key = row["exhibitor_uid"]
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        if _is_valid_exhibitor(row):
+            rows.append(row)
 
     return rows
 
