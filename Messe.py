@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-04-30-confidence-guardrails-v61"
+APP_BUILD = "2026-05-20-koelnmesse-directory-v62"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -72,6 +72,28 @@ JUNK_NAME_HINTS = (
     "profile der",
     "mehr informationen",
 )
+
+KOELNMESSE_DIRECTORY_MARKERS = (
+    "aussteller- und produktsuche",
+    "route=aussteller%2fblaettern",
+    "route=aussteller/blaettern",
+)
+
+KOELNMESSE_SKIP_TOKENS = {
+    "aussteller",
+    "merkliste",
+    "log-in für merklisten funktionalität",
+    "seite teilen",
+    "zurücksetzen",
+    "suchen sie nach ausstellern, markennamen, produktgruppen oder ländern.",
+    "plz oder stadt",
+    "relevanz",
+    "a-z",
+    "herkunftsland",
+    "halle",
+    "suchbegriff eingeben",
+    "bitte wählen",
+}
 
 # =========================
 # SKM matching
@@ -894,6 +916,14 @@ def _try_site_specific_exhibitor_fetch(config: ScrapeConfig) -> Optional[List[Di
             LAST_SCRAPE_WARNINGS.append(f"Interzoo fast path failed, fell back to HTML scraping: {exc}")
             return None
 
+    try:
+        koelnmesse_rows = _fetch_koelnmesse_directory_exhibitors(config)
+        if koelnmesse_rows is not None:
+            return koelnmesse_rows
+    except Exception as exc:
+        LAST_SCRAPE_WARNINGS.append(f"Koelnmesse-style directory adapter failed, fell back to HTML scraping: {exc}")
+        return None
+
     return None
 
 
@@ -957,6 +987,215 @@ def _fetch_interzoo_algolia_exhibitors(config: ScrapeConfig) -> List[Dict[str, A
         f"Used Interzoo structured search API for faster scraping across {len(countries)} country bucket(s)"
     )
     return rows
+
+
+def _fetch_koelnmesse_directory_exhibitors(config: ScrapeConfig) -> Optional[List[Dict[str, Any]]]:
+    first_page_html = fetch_html_with_retry(config.url, config, retries=2)
+    lower_html = first_page_html.lower()
+    if not any(marker in lower_html for marker in KOELNMESSE_DIRECTORY_MARKERS):
+        return None
+
+    page_urls = _extract_koelnmesse_directory_page_urls(first_page_html, config.url)
+    if not page_urls:
+        page_urls = [config.url]
+    page_urls = page_urls[: max(1, int(config.max_pages))]
+
+    rows: List[Dict[str, Any]] = []
+    for index, page_url in enumerate(page_urls):
+        page_html = first_page_html if index == 0 and page_url == page_urls[0] else fetch_html_with_retry(page_url, config, retries=2)
+        page_rows = _parse_koelnmesse_directory_page(page_html, page_url, config.url)
+        rows.extend(page_rows)
+        if config.request_delay_seconds:
+            time.sleep(min(config.request_delay_seconds, 0.12))
+
+    rows = _dedupe_exhibitors(rows)
+    if rows:
+        LAST_SCRAPE_WARNINGS.append(
+            f"Used Koelnmesse-style directory adapter across {len(page_urls)} page(s); captured {len(rows)} lead row(s)"
+        )
+    return rows
+
+
+def _extract_koelnmesse_directory_page_urls(html_text: str, base_url: str) -> List[str]:
+    soup = _require_bs4()(html_text, "html.parser")
+    urls: List[str] = [base_url]
+    seen = {base_url}
+    for link in soup.find_all("a", href=True):
+        href = _clean_text(link.get("href"))
+        lower_href = href.lower()
+        if "route=aussteller%2fblaettern" not in lower_href and "route=aussteller/blaettern" not in lower_href:
+            continue
+        absolute = _absolute_url(href, base_url)
+        if absolute and absolute not in seen:
+            seen.add(absolute)
+            urls.append(absolute)
+    return urls
+
+
+def _parse_koelnmesse_directory_page(page_html: str, page_url: str, source_url: str) -> List[Dict[str, Any]]:
+    soup = _require_bs4()(page_html, "html.parser")
+    strings = [_clean_text(value) for value in soup.stripped_strings]
+    lines = [value for value in strings if value]
+    link_map = _koelnmesse_company_links(soup, page_url)
+
+    start_index = 0
+    marker = ["a-z", "herkunftsland", "halle", "aussteller"]
+    for index in range(len(lines) - 3):
+        window = [lines[index + offset].strip().lower() for offset in range(4)]
+        if window == marker:
+            start_index = index + 4
+
+    rows: List[Dict[str, Any]] = []
+    i = start_index
+    while i < len(lines):
+        token = lines[i]
+        lower = token.lower()
+        if _koelnmesse_is_pagination_line(token):
+            break
+        if _koelnmesse_should_skip_line(lower):
+            i += 1
+            continue
+        if _koelnmesse_looks_like_location(token):
+            i += 1
+            continue
+
+        name = token
+        country = ""
+        location = ""
+        j = i + 1
+        while j < len(lines):
+            nxt = lines[j]
+            nxt_lower = nxt.lower()
+            if _koelnmesse_is_pagination_line(nxt):
+                break
+            if _koelnmesse_should_skip_line(nxt_lower):
+                j += 1
+                continue
+            if _koelnmesse_looks_like_location(nxt):
+                location = nxt
+                j += 1
+                break
+            if not country:
+                country = nxt
+                j += 1
+                continue
+            if _koelnmesse_looks_like_company_name(nxt):
+                break
+            j += 1
+
+        if location:
+            hall, booth = _parse_koelnmesse_location(location)
+            detail_url = ""
+            possible_links = link_map.get(_clean_text(name), [])
+            if possible_links:
+                detail_url = possible_links.pop(0)
+            row = _make_row(
+                name=name,
+                hall=hall,
+                booth=booth,
+                country=country,
+                website="",
+                detail_url=detail_url,
+                source_url=source_url,
+                raw_text=f"{name} {country} {location}",
+                method="koelnmesse_directory",
+            )
+            row["show_area"] = _clean_text(hall)
+            row["exhibitor_uid"] = _clean_text(detail_url or f"{name}|{hall}|{booth}")
+            if _is_valid_exhibitor(row):
+                rows.append(row)
+            i = max(j, i + 1)
+            continue
+
+        i += 1
+
+    return rows
+
+
+def _koelnmesse_company_links(soup: Any, base_url: str) -> Dict[str, List[str]]:
+    link_map: Dict[str, List[str]] = defaultdict(list)
+    for link in soup.find_all("a", href=True):
+        text = _clean_text(link.get_text(" "))
+        href = _clean_text(link.get("href"))
+        if not text or not href:
+            continue
+        if not _koelnmesse_looks_like_company_name(text):
+            continue
+        if _koelnmesse_looks_like_location(text):
+            continue
+        absolute = _absolute_url(href, base_url)
+        if absolute and absolute not in link_map[text]:
+            link_map[text].append(absolute)
+    return link_map
+
+
+def _koelnmesse_should_skip_line(lower_text: str) -> bool:
+    if not lower_text:
+        return True
+    if lower_text in KOELNMESSE_SKIP_TOKENS:
+        return True
+    if lower_text.startswith("log-in"):
+        return True
+    if lower_text.startswith("von ") and lower_text[4:].strip().isdigit():
+        return True
+    if re.fullmatch(r"\d+", lower_text):
+        return True
+    if any(token in lower_text for token in ["merklisten", "erweiterte suche", "seiten teilen"]):
+        return True
+    return False
+
+
+def _koelnmesse_is_pagination_line(text: str) -> bool:
+    lower = _clean_text(text).lower()
+    if lower == "seite":
+        return True
+    if lower.startswith("von ") and lower[4:].strip().isdigit():
+        return True
+    return False
+
+
+def _koelnmesse_looks_like_location(text: str) -> bool:
+    lower = _clean_text(text).lower()
+    return bool(
+        lower.startswith("halle ")
+        or lower.startswith("boulevard ")
+        or lower.startswith("freifläche")
+        or lower.startswith("freiflaeche")
+        or " | " in text
+    )
+
+
+def _koelnmesse_looks_like_company_name(text: str) -> bool:
+    cleaned = _clean_text(text)
+    lower = cleaned.lower()
+    if not cleaned or len(cleaned) < 2 or len(cleaned) > 160:
+        return False
+    if _koelnmesse_should_skip_line(lower):
+        return False
+    if _koelnmesse_looks_like_location(cleaned):
+        return False
+    if any(token in lower for token in JUNK_NAME_HINTS):
+        return False
+    return True
+
+
+def _parse_koelnmesse_location(location_text: str) -> Tuple[str, str]:
+    cleaned = _clean_text(location_text)
+    if not cleaned:
+        return "", ""
+
+    if "|" in cleaned:
+        left, right = [part.strip() for part in cleaned.split("|", 1)]
+        hall = normalize_hall(left)
+        booth = _clean_text(right)
+        return hall, booth
+
+    boulevard_match = re.match(r"^(Boulevard|Freifläche|Freiflaeche|Passage)\s+(.+)$", cleaned, flags=re.IGNORECASE)
+    if boulevard_match:
+        return boulevard_match.group(1).title(), _clean_text(boulevard_match.group(2))
+
+    hall, booth = extract_hall_booth(cleaned)
+    return hall, booth
 
 
 def _fetch_messefrankfurt_directory_exhibitors(config: ScrapeConfig) -> Optional[List[Dict[str, Any]]]:
@@ -2222,6 +2461,16 @@ def extract_hall_booth(text: str) -> Tuple[str, str]:
     text = _clean_text(text)
     hall = ""
     booth = ""
+
+    pipe_match = re.search(
+        r"\b(?:halle|hall)\s*([0-9]{1,2}(?:\.[0-9])?[a-z]?)\s*\|\s*([a-z0-9][a-z0-9\s,/-]{0,40})$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if pipe_match:
+        hall = f"Halle {pipe_match.group(1).strip().upper()}"
+        booth = _clean_text(pipe_match.group(2)).upper()
+        return hall, booth
 
     hall_patterns = [
         r"\b(?:halle|hall)\s*[:#-]?\s*([0-9]{1,2}(?:\.[0-9])?[a-z]?)\b",
@@ -4163,12 +4412,16 @@ def _infer_run_strategy(result_df: pd.DataFrame, scrape_warnings: Sequence[str])
         return "Embedded API"
     if "interzoo structured search api" in warnings_text:
         return "Structured API"
+    if "koelnmesse-style directory adapter" in warnings_text:
+        return "Directory Adapter"
     if "sitemap profile fallback" in warnings_text or "sitemap_profile" in methods:
         return "Sitemap Profile"
     if "embedded api quality check" in warnings_text:
         return "Embedded API"
     if "site adapter quality check" in warnings_text:
         return "Site Adapter"
+    if "koelnmesse_directory" in methods:
+        return "Directory Adapter"
     if "json" in methods:
         return "Embedded API"
     if "table" in methods or "custom_selector" in methods or "card" in methods:
