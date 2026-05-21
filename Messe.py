@@ -30,7 +30,7 @@ except Exception:
     fuzz = None
 
 BUILTIN_SKM_PATH = Path("data/skm_base.csv")
-APP_BUILD = "2026-05-20-koelnmesse-card-parser-v65"
+APP_BUILD = "2026-05-21-koelnmesse-coverage-check-v66"
 
 MESSE_FRANKFURT_API_BASES = {
     "dev": "https://api-dev.messefrankfurt.com/service/esb_api",
@@ -995,10 +995,19 @@ def _fetch_koelnmesse_directory_exhibitors(config: ScrapeConfig) -> Optional[Lis
     if not any(marker in lower_html for marker in KOELNMESSE_DIRECTORY_MARKERS):
         return None
 
+    declared_pages = _koelnmesse_declared_total_pages(first_page_html)
     page_urls = _extract_koelnmesse_directory_page_urls(first_page_html, config.url)
     if not page_urls:
         page_urls = [config.url]
     page_urls = page_urls[: max(1, int(config.max_pages))]
+    page_step = _infer_koelnmesse_page_step(
+        sorted(
+            {
+                _safe_int((parse_qs(urlparse(page_url).query, keep_blank_values=True).get("start") or ["0"])[0], default=0)
+                for page_url in page_urls
+            }
+        )
+    ) or 20
 
     rows: List[Dict[str, Any]] = []
     for index, page_url in enumerate(page_urls):
@@ -1010,8 +1019,13 @@ def _fetch_koelnmesse_directory_exhibitors(config: ScrapeConfig) -> Optional[Lis
 
     rows = _dedupe_exhibitors(rows)
     if rows:
+        expected_rows_estimate = declared_pages * page_step if declared_pages and page_step else 0
+        for row in rows:
+            row["__source_declared_pages"] = declared_pages
+            row["__source_page_step"] = page_step
+            row["__source_expected_rows_estimate"] = expected_rows_estimate
         LAST_SCRAPE_WARNINGS.append(
-            f"Used Koelnmesse-style directory adapter across {len(page_urls)} page(s); captured {len(rows)} lead row(s)"
+            f"Used Koelnmesse-style directory adapter across {len(page_urls)} fetched page(s) with {declared_pages or 'unknown'} declared page(s); captured {len(rows)} lead row(s)"
         )
     return rows
 
@@ -2994,7 +3008,16 @@ def _diagnostic_metrics(result_df: pd.DataFrame, scrape_warnings: Sequence[str])
     unknown_hall_rows = 0
     unknown_country_rows = 0
     junk_name_rows = 0
+    declared_pages = 0
+    page_step = 0
+    expected_rows_estimate = 0
     if total_rows:
+        if "__source_declared_pages" in result_df.columns:
+            declared_pages = int(pd.to_numeric(result_df["__source_declared_pages"], errors="coerce").fillna(0).max())
+        if "__source_page_step" in result_df.columns:
+            page_step = int(pd.to_numeric(result_df["__source_page_step"], errors="coerce").fillna(0).max())
+        if "__source_expected_rows_estimate" in result_df.columns:
+            expected_rows_estimate = int(pd.to_numeric(result_df["__source_expected_rows_estimate"], errors="coerce").fillna(0).max())
         normalized_names = set()
         if "exhibitor_name" in result_df.columns:
             exhibitor_names = result_df["exhibitor_name"].fillna("").astype(str).str.strip()
@@ -3027,6 +3050,8 @@ def _diagnostic_metrics(result_df: pd.DataFrame, scrape_warnings: Sequence[str])
     junk_ratio = (junk_name_rows / total_rows * 100) if total_rows else 0.0
     skm_ratio = (skm_rows / total_rows * 100) if total_rows else 0.0
     review_ratio = (review_rows / total_rows * 100) if total_rows else 0.0
+    rows_per_declared_page = (total_rows / declared_pages) if declared_pages else 0.0
+    estimated_row_coverage = (total_rows / expected_rows_estimate * 100) if expected_rows_estimate else 0.0
     strategy = _infer_run_strategy(result_df, scrape_warnings)
     warning_count = len(scrape_warnings)
 
@@ -3038,6 +3063,9 @@ def _diagnostic_metrics(result_df: pd.DataFrame, scrape_warnings: Sequence[str])
         "unique_exhibitors": unique_exhibitors,
         "skm_rows": skm_rows,
         "review_rows": review_rows,
+        "declared_pages": declared_pages,
+        "page_step": page_step,
+        "expected_rows_estimate": expected_rows_estimate,
         "hall_coverage": hall_coverage,
         "booth_coverage": booth_coverage,
         "unknown_hall_rows": unknown_hall_rows,
@@ -3048,6 +3076,8 @@ def _diagnostic_metrics(result_df: pd.DataFrame, scrape_warnings: Sequence[str])
         "junk_ratio": junk_ratio,
         "skm_ratio": skm_ratio,
         "review_ratio": review_ratio,
+        "rows_per_declared_page": rows_per_declared_page,
+        "estimated_row_coverage": estimated_row_coverage,
         "strategy": strategy,
         "warning_count": warning_count,
     }
@@ -3063,6 +3093,9 @@ def _diagnostic_flags(metrics: Dict[str, Any]) -> List[Tuple[str, str]]:
     unknown_country_ratio = float(metrics["unknown_country_ratio"])
     junk_ratio = float(metrics["junk_ratio"])
     unique_exhibitors = int(metrics["unique_exhibitors"])
+    declared_pages = int(metrics["declared_pages"])
+    rows_per_declared_page = float(metrics["rows_per_declared_page"])
+    estimated_row_coverage = float(metrics["estimated_row_coverage"])
 
     if total_rows == 0:
         flags.append(("critical", "No exhibitor rows were captured."))
@@ -3075,6 +3108,16 @@ def _diagnostic_flags(metrics: Dict[str, Any]) -> List[Tuple[str, str]]:
 
     if unique_exhibitors and total_rows >= max(unique_exhibitors * 4, 200):
         flags.append(("warning", "The run contains many repeated row variants compared with unique exhibitor names."))
+
+    if declared_pages >= 20 and rows_per_declared_page < 10:
+        flags.append(("critical", "Declared directory pagination is much deeper than the current captured row volume suggests."))
+    elif declared_pages >= 10 and rows_per_declared_page < 15:
+        flags.append(("warning", "Captured rows per declared directory page look lower than expected."))
+
+    if estimated_row_coverage and estimated_row_coverage < 50:
+        flags.append(("critical", "Estimated directory coverage is still well below half of the declared page volume."))
+    elif estimated_row_coverage and estimated_row_coverage < 75:
+        flags.append(("warning", "Estimated directory coverage still looks partial."))
 
     if hall_coverage < 35:
         flags.append(("critical", "Hall coverage is very thin."))
@@ -4612,6 +4655,9 @@ def _render_run_diagnostics(
     unique_exhibitors = int(metrics["unique_exhibitors"])
     unknown_hall_ratio = float(metrics["unknown_hall_ratio"])
     review_ratio = float(metrics["review_ratio"])
+    declared_pages = int(metrics["declared_pages"])
+    rows_per_declared_page = float(metrics["rows_per_declared_page"])
+    estimated_row_coverage = float(metrics["estimated_row_coverage"])
     runtime_seconds = (run_metadata or {}).get("elapsed_seconds")
     runtime_band = str((run_metadata or {}).get("runtime_band") or _runtime_band(runtime_seconds))
     health = _health_signal(result_df, scrape_warnings)
@@ -4663,6 +4709,11 @@ def _render_run_diagnostics(
                 <div class="summary-ribbon-caption">Source countries represented in the current operating list.</div>
             </div>
             <div class="summary-ribbon-card">
+                <div class="summary-ribbon-title">Declared Pages</div>
+                <div class="summary-ribbon-value">{declared_pages if declared_pages else "n/a"}</div>
+                <div class="summary-ribbon-caption">Directory pagination depth detected directly from the source page.</div>
+            </div>
+            <div class="summary-ribbon-card">
                 <div class="summary-ribbon-title">Review Load</div>
                 <div class="summary-ribbon-value">{review_ratio:.1f}%</div>
                 <div class="summary-ribbon-caption">Share of the result set still sitting in possible-match review.</div>
@@ -4675,6 +4726,19 @@ def _render_run_diagnostics(
         </div>
         """
     )
+    if declared_pages:
+        _render_html_block(
+            f"""
+            <div class="dashboard-note">
+                <div class="dashboard-note-title">Directory Coverage Check</div>
+                <div class="dashboard-note-body">
+                    The source declares <strong>{declared_pages}</strong> page(s). This run captured <strong>{len(result_df)}</strong> row(s),
+                    or about <strong>{rows_per_declared_page:.1f}</strong> rows per declared page, with an estimated page-volume coverage of
+                    <strong>{estimated_row_coverage:.1f}%</strong>.
+                </div>
+            </div>
+            """
+        )
     if quality_flags:
         chips = "".join(
             f'<span class="filter-chip {"active" if severity == "warning" else ""}">{html.escape(message)}</span>'
